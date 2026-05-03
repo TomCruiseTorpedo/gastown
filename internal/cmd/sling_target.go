@@ -1,10 +1,13 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/crew"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/workspace"
@@ -15,6 +18,9 @@ var spawnPolecatForSling = SpawnPolecatForSling
 
 // resolveTargetAgentFn is a seam for tests. Production uses resolveTargetAgent.
 var resolveTargetAgentFn = resolveTargetAgent
+
+// startStoppedCrewFn is a seam for tests. Production uses startStoppedCrewMember.
+var startStoppedCrewFn = startStoppedCrewMember
 
 // resolveTargetAgent converts a target spec to agent ID, pane, and hook root.
 func resolveTargetAgent(target string) (agentID string, pane string, hookRoot string, err error) {
@@ -250,6 +256,28 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	// resolve here, getting their pane for nudge delivery (gt-in7b).
 	agentID, pane, workDir, err := resolveTargetAgentFn(target)
 	if err != nil {
+		// Stopped crew fallback (gt-028y): if the target is a crew member that
+		// exists on disk but has no live tmux session, auto-start them and
+		// retry resolution. Mirrors the polecat respawn-on-dead behavior below.
+		if rigName, crewName, isCrew := parseCrewTarget(target); isCrew && !opts.DryRun {
+			startErr := startStoppedCrewFn(rigName, crewName, opts.TownRoot)
+			switch {
+			case startErr == nil:
+				fmt.Printf("Crew member %s/%s was stopped, started fresh session.\n", rigName, crewName)
+				agentID, pane, workDir, err = resolveTargetAgentFn(target)
+				if err == nil {
+					result.Agent = agentID
+					result.Pane = pane
+					result.WorkDir = workDir
+					return result, nil
+				}
+				// Fall through to surface the post-start resolution error.
+			case errors.Is(startErr, crew.ErrCrewNotFound):
+				return nil, fmt.Errorf("crew member %q does not exist in rig %q\nAdd with: gt crew add %s --rig %s", crewName, rigName, crewName, rigName)
+			default:
+				return nil, fmt.Errorf("crew member %s/%s is not running and auto-start failed: %w\nStart manually with: gt crew start %s --rig %s", rigName, crewName, startErr, crewName, rigName)
+			}
+		}
 		if isPolecatTarget(target) {
 			parts := strings.Split(target, "/")
 			if len(parts) >= 3 && parts[1] == "polecats" {
@@ -288,4 +316,48 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 	result.Pane = pane
 	result.WorkDir = workDir
 	return result, nil
+}
+
+// parseCrewTarget parses a "<rig>/crew/<name>" target. Returns (rig, name, true)
+// on match, ("", "", false) otherwise.
+func parseCrewTarget(target string) (rigName, crewName string, ok bool) {
+	parts := strings.Split(target, "/")
+	if len(parts) != 3 || parts[1] != constants.RoleCrew {
+		return "", "", false
+	}
+	if parts[0] == "" || parts[2] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[2], true
+}
+
+// startStoppedCrewMember starts an existing-but-stopped crew member's session.
+// Returns crew.ErrCrewNotFound if the crew member does not exist on disk;
+// callers should surface that as actionable guidance rather than auto-creating.
+// Mirrors startCrewMember (start.go) but refuses to auto-create new crew dirs.
+func startStoppedCrewMember(rigName, crewName, townRoot string) error {
+	if townRoot == "" {
+		var err error
+		townRoot, err = workspace.FindFromCwd()
+		if err != nil || townRoot == "" {
+			return fmt.Errorf("locating town root: %w", err)
+		}
+	}
+
+	mgr, _, err := getCrewManager(rigName)
+	if err != nil {
+		return err
+	}
+
+	// Existence gate: do not auto-create crew workspaces from sling. The user
+	// asked to dispatch to a *named* crew member; if they don't exist on disk
+	// it's almost certainly a typo, not a request to provision a new worker.
+	if _, err := mgr.Get(crewName); err != nil {
+		return err
+	}
+
+	if err := mgr.Start(crewName, crew.StartOptions{}); err != nil && !errors.Is(err, crew.ErrSessionRunning) {
+		return err
+	}
+	return nil
 }
