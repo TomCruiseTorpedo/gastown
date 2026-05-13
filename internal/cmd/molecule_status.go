@@ -353,6 +353,9 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("cannot determine agent identity (role: %s)", roleCtx.Role)
 		}
 	}
+	if err := ensureRoleWorktreeIntegrity(cwd, townRoot, roleCtx.Role); err != nil {
+		return err
+	}
 
 	// Find beads directory.
 	// First try CWD-based discovery, then resolve to the correct rig database
@@ -466,7 +469,8 @@ func runMoleculeStatus(cmd *cobra.Command, args []string) error {
 	var hookBead *beads.Issue
 	isPolecat := roleCtx.Role == RolePolecat ||
 		(os.Getenv("GT_ROLE") != "" && func() bool {
-			r, _, _ := parseRoleString(os.Getenv("GT_ROLE")); return r == RolePolecat
+			r, _, _ := parseRoleString(os.Getenv("GT_ROLE"))
+			return r == RolePolecat
 		}())
 
 	hookBead = lookupHookedWork()
