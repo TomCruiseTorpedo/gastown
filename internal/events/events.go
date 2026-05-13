@@ -36,6 +36,7 @@ const (
 const (
 	TypeSling   = "sling"
 	TypeHook    = "hook"
+	TypeHookAck = "hook_ack"
 	TypeUnhook  = "unhook"
 	TypeHandoff = "handoff"
 	TypeDone    = "done"
@@ -55,9 +56,9 @@ const (
 	TypeMassDeath    = "mass_death"    // Multiple sessions died in short window
 
 	// Witness patrol events
-	TypePatrolStarted   = "patrol_started"
-	TypePolecatChecked  = "polecat_checked"
-	TypePolecatNudged   = "polecat_nudged"
+	TypePatrolStarted    = "patrol_started"
+	TypePolecatChecked   = "polecat_checked"
+	TypePolecatNudged    = "polecat_nudged"
 	TypeEscalationSent   = "escalation_sent"
 	TypeEscalationAcked  = "escalation_acked"
 	TypeEscalationClosed = "escalation_closed"
@@ -163,6 +164,23 @@ func HookPayload(beadID string) map[string]interface{} {
 	return map[string]interface{}{
 		"bead": beadID,
 	}
+}
+
+// HookAckPayload creates a payload for hook acknowledgment events.
+func HookAckPayload(beadID, moleculeID, formula, sessionID string) map[string]interface{} {
+	p := map[string]interface{}{
+		"bead": beadID,
+	}
+	if moleculeID != "" {
+		p["molecule"] = moleculeID
+	}
+	if formula != "" {
+		p["formula"] = formula
+	}
+	if sessionID != "" {
+		p["session"] = sessionID
+	}
+	return p
 }
 
 // HandoffPayload creates a payload for handoff events.

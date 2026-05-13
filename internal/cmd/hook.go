@@ -38,6 +38,7 @@ you left off.
 
 Examples:
   gt hook                                    # Show what's on my hook
+  gt hook ack                                # Acknowledge current hooked work
   gt hook status                             # Same as above
   gt hook gt-abc                             # Attach issue gt-abc to your hook
   gt hook gt-abc -s "Fix the bug"            # With subject for handoff mail
@@ -91,6 +92,22 @@ Output format (one line):
   gastown/polecats/nux: gt-abc123 'Fix the widget bug' [in_progress]`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: runHookShow,
+}
+
+// hookAckCmd records that the current agent has read and started its hooked work.
+var hookAckCmd = &cobra.Command{
+	Use:   "ack",
+	Short: "Acknowledge current hooked work",
+	Long: `Acknowledge that the current agent has read its hook and is starting work.
+
+The acknowledgment is appended to the hooked bead's notes with a UTC timestamp
+and also emitted as a hook_ack activity event. This gives witnesses a signal
+that work was actually picked up by the agent, distinct from session startup.
+
+Examples:
+  gt hook ack`,
+	Args: cobra.NoArgs,
+	RunE: runHookAck,
 }
 
 // hookAttachCmd attaches a bead to a hook (alias for 'gt hook <bead-id>')
@@ -181,6 +198,7 @@ func init() {
 
 	hookCmd.AddCommand(hookStatusCmd)
 	hookCmd.AddCommand(hookShowCmd)
+	hookCmd.AddCommand(hookAckCmd)
 	hookCmd.AddCommand(hookAttachCmd)
 	hookCmd.AddCommand(hookDetachCmd)
 	hookCmd.AddCommand(hookClearCmd)
@@ -205,6 +223,126 @@ func runHookOrStatus(cmd *cobra.Command, args []string) error {
 // runHookClear handles 'gt hook clear' - delegates to runUnsling
 func runHookClear(cmd *cobra.Command, args []string) error {
 	return runUnslingWith(cmd, args, hookDryRun, hookForce)
+}
+
+func runHookAck(_ *cobra.Command, _ []string) error {
+	agentID, err := currentAgentIDForHookAck()
+	if err != nil {
+		return err
+	}
+
+	hooked, err := currentHookedIssueForAgent(agentID)
+	if err != nil {
+		return err
+	}
+	if hooked == nil {
+		return fmt.Errorf("no hooked work found for %s", agentID)
+	}
+
+	attachment := beads.ParseAttachmentFields(hooked)
+	sessionID := runtime.SessionIDFromEnv()
+	ackTime := time.Now().UTC()
+	note := formatHookAckNote(ackTime, agentID, hooked.ID, sessionID, attachment)
+
+	if err := BdCmd("update", hooked.ID, "--append-notes="+note).
+		Dir(resolveBeadDir(hooked.ID)).
+		StripBeadsDir().
+		WithAutoCommit().
+		Run(); err != nil {
+		return fmt.Errorf("recording hook ack on %s: %w", hooked.ID, err)
+	}
+
+	moleculeID := ""
+	formula := ""
+	if attachment != nil {
+		moleculeID = attachment.AttachedMolecule
+		formula = attachment.AttachedFormula
+	}
+	if err := events.LogFeed(events.TypeHookAck, agentID, events.HookAckPayload(hooked.ID, moleculeID, formula, sessionID)); err != nil {
+		fmt.Fprintf(os.Stderr, "%s Warning: failed to log hook ack event: %v\n", style.Dim.Render("⚠"), err)
+	}
+
+	fmt.Printf("%s Acknowledged hook %s at %s\n", style.Bold.Render("✓"), hooked.ID, ackTime.Format(time.RFC3339))
+	return nil
+}
+
+func currentAgentIDForHookAck() (string, error) {
+	cwd, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("getting current directory: %w", err)
+	}
+	townRoot, err := workspace.FindFromCwd()
+	if err != nil {
+		return "", fmt.Errorf("finding workspace: %w", err)
+	}
+	roleCtx := detectRole(cwd, townRoot)
+	if roleCtx.Role == RoleUnknown {
+		roleCtx, _ = GetRoleWithContext(cwd, townRoot)
+	}
+	agentID := buildAgentIdentity(roleCtx)
+	if agentID == "" {
+		return "", fmt.Errorf("cannot determine agent identity (role: %s)", roleCtx.Role)
+	}
+	return agentID, nil
+}
+
+func currentHookedIssueForAgent(agentID string) (*beads.Issue, error) {
+	workDir, err := findLocalBeadsDir()
+	if err != nil {
+		return nil, fmt.Errorf("not in a beads workspace: %w", err)
+	}
+
+	if issue, err := findAssignedIssueInDir(workDir, agentID); err != nil {
+		return nil, err
+	} else if issue != nil {
+		return issue, nil
+	}
+
+	// Mayor-slung hq-* work lives in town beads even when assigned to a rig agent.
+	townRoot, err := workspace.FindFromCwd()
+	if err == nil && townRoot != "" {
+		townDir := filepath.Join(townRoot, ".beads")
+		if townDir != workDir {
+			return findAssignedIssueInDir(townDir, agentID)
+		}
+	}
+
+	return nil, nil
+}
+
+func findAssignedIssueInDir(workDir, agentID string) (*beads.Issue, error) {
+	b := beads.New(workDir)
+	for _, status := range []string{beads.StatusHooked, string(beads.StatusInProgress)} {
+		issues, err := b.List(beads.ListOptions{Status: status, Assignee: agentID, Priority: -1})
+		if err != nil {
+			return nil, fmt.Errorf("listing %s work for %s: %w", status, agentID, err)
+		}
+		if len(issues) > 0 {
+			return issues[0], nil
+		}
+	}
+	return nil, nil
+}
+
+func formatHookAckNote(t time.Time, agentID, beadID, sessionID string, attachment *beads.AttachmentFields) string {
+	parts := []string{
+		"hook_ack:",
+		t.UTC().Format(time.RFC3339),
+		"actor=" + agentID,
+		"bead=" + beadID,
+	}
+	if sessionID != "" {
+		parts = append(parts, "session="+sessionID)
+	}
+	if attachment != nil {
+		if attachment.AttachedMolecule != "" {
+			parts = append(parts, "molecule="+attachment.AttachedMolecule)
+		}
+		if attachment.AttachedFormula != "" {
+			parts = append(parts, "formula="+attachment.AttachedFormula)
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func runHook(_ *cobra.Command, args []string) error {

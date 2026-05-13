@@ -3,6 +3,9 @@ package cmd
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/steveyegge/gastown/internal/beads"
 )
 
 // TestHookPolecatEnvCheck verifies that the polecat guard in runHook uses
@@ -152,5 +155,19 @@ func TestNormalizeHookShowTarget(t *testing.T) {
 				t.Fatalf("normalizeHookShowTarget(%q) = %q, want %q", tt.target, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestFormatHookAckNote(t *testing.T) {
+	ackTime := time.Date(2026, 5, 13, 18, 45, 0, 0, time.FixedZone("local", -7*60*60))
+	attachment := &beads.AttachmentFields{
+		AttachedMolecule: "hq-wisp-f6fw",
+		AttachedFormula:  "mol-polecat-work",
+	}
+
+	got := formatHookAckNote(ackTime, "gastown/polecats/thunder", "gt-gh-2635", "session-123", attachment)
+	want := "hook_ack: 2026-05-14T01:45:00Z actor=gastown/polecats/thunder bead=gt-gh-2635 session=session-123 molecule=hq-wisp-f6fw formula=mol-polecat-work"
+	if got != want {
+		t.Fatalf("formatHookAckNote() = %q, want %q", got, want)
 	}
 }
