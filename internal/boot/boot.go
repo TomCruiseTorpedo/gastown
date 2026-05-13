@@ -4,7 +4,6 @@
 package boot
 
 import (
-	"github.com/steveyegge/gastown/internal/cli"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -13,7 +12,10 @@ import (
 	"time"
 
 	"github.com/gofrs/flock"
+	"github.com/steveyegge/gastown/internal/cli"
 	"github.com/steveyegge/gastown/internal/config"
+	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/tmux"
 	"github.com/steveyegge/gastown/internal/util"
@@ -179,20 +181,30 @@ func (b *Boot) spawnTmux(agentOverride string) error {
 	}
 
 	// Use unified session lifecycle for config → settings → command → create → env.
-	_, err := session.StartSession(b.tmux, session.SessionConfig{
-		SessionID: session.BootSessionName(),
-		WorkDir:   b.bootDir,
-		Role:      "boot",
-		TownRoot:  b.townRoot,
-		Beacon: session.BeaconConfig{
-			Recipient: "boot",
-			Sender:    "daemon",
-			Topic:     "triage",
-		},
-		Instructions:  "Run `" + cli.Name() + " boot triage` now.",
+	beacon := session.BeaconConfig{
+		Recipient: "boot",
+		Sender:    "daemon",
+		Topic:     "triage",
+	}
+	instructions := "Run `" + cli.Name() + " boot triage` now."
+	initialPrompt := session.BuildStartupPrompt(beacon, instructions)
+	result, err := session.StartSession(b.tmux, session.SessionConfig{
+		SessionID:     session.BootSessionName(),
+		WorkDir:       b.bootDir,
+		Role:          "boot",
+		TownRoot:      b.townRoot,
+		Beacon:        beacon,
+		Instructions:  instructions,
 		AgentOverride: agentOverride,
 	})
-	return err
+	if err != nil {
+		return err
+	}
+
+	_ = runtime.RunStartupFallback(b.tmux, session.BootSessionName(), "boot", result.RuntimeConfig)
+	_ = runtime.DeliverStartupPromptFallback(b.tmux, session.BootSessionName(), initialPrompt, result.RuntimeConfig, constants.ClaudeStartTimeout)
+
+	return nil
 }
 
 // spawnDegraded spawns Boot in degraded mode (no tmux).

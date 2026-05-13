@@ -38,6 +38,8 @@ type tmuxOps interface {
 	AcceptBypassPermissionsWarning(session string) error
 	SendKeysRaw(session, keys string) error
 	GetSessionInfo(name string) (*tmux.SessionInfo, error)
+	NudgeSession(sessionID, message string) error
+	WaitForRuntimeReady(sessionID string, rc *config.RuntimeConfig, timeout time.Duration) error
 }
 
 // Manager handles deacon lifecycle operations.
@@ -102,6 +104,13 @@ func (m *Manager) Start(agentOverride string) error {
 
 	// Ensure runtime settings exist in deaconDir where session runs.
 	runtimeConfig := config.ResolveRoleAgentConfig("deacon", m.townRoot, deaconDir)
+	if agentOverride != "" {
+		var err error
+		runtimeConfig, _, err = config.ResolveAgentConfigWithOverride(m.townRoot, deaconDir, agentOverride)
+		if err != nil {
+			return fmt.Errorf("resolving agent config: %w", err)
+		}
+	}
 	if err := runtime.EnsureSettingsForRole(deaconDir, deaconDir, "deacon", runtimeConfig); err != nil {
 		return fmt.Errorf("ensuring runtime settings: %w", err)
 	}
@@ -178,6 +187,9 @@ func (m *Manager) Start(agentOverride string) error {
 
 	// Accept startup dialogs (workspace trust + bypass permissions) if they appear.
 	_ = t.AcceptStartupDialogs(sessionID)
+
+	_ = runtime.RunStartupFallback(t, sessionID, "deacon", runtimeConfig)
+	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, runtimeConfig, constants.ClaudeStartTimeout)
 
 	time.Sleep(constants.ShutdownNotifyDelay)
 

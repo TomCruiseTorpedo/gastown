@@ -579,7 +579,13 @@ func startDeaconSession(t *tmux.Tmux, sessionName, agentOverride string) error {
 
 	deaconTownRoot, _ := workspace.FindFromCwdOrError()
 	runtimeCfg := config.ResolveRoleAgentConfig("deacon", deaconTownRoot, "")
+	if agentOverride != "" {
+		if rc, _, err := config.ResolveAgentConfigWithOverride(deaconTownRoot, "", agentOverride); err == nil {
+			runtimeCfg = rc
+		}
+	}
 	_ = runtime.RunStartupFallback(t, sessionName, "deacon", runtimeCfg)
+	_ = runtime.DeliverStartupPromptFallback(t, sessionName, initialPrompt, runtimeCfg, constants.ClaudeStartTimeout)
 
 	return nil
 }

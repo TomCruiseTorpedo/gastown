@@ -159,7 +159,10 @@ func StartSession(t *tmux.Tmux, cfg SessionConfig) (_ *StartResult, retErr error
 	}
 
 	// 1. Resolve runtime config.
-	runtimeConfig := config.ResolveRoleAgentConfig(cfg.Role, cfg.TownRoot, cfg.RigPath)
+	runtimeConfig, err := resolveRuntimeConfig(cfg)
+	if err != nil {
+		return nil, fmt.Errorf("resolving runtime config: %w", err)
+	}
 
 	// 2. Ensure settings/plugins exist for the agent.
 	settingsDir := config.RoleSettingsDir(cfg.Role, cfg.RigPath)
@@ -444,6 +447,14 @@ func buildPrompt(cfg SessionConfig) string {
 		return BuildStartupPrompt(cfg.Beacon, cfg.Instructions)
 	}
 	return FormatStartupBeacon(cfg.Beacon)
+}
+
+func resolveRuntimeConfig(cfg SessionConfig) (*config.RuntimeConfig, error) {
+	if cfg.AgentOverride != "" {
+		rc, _, err := config.ResolveAgentConfigWithOverride(cfg.TownRoot, cfg.RigPath, cfg.AgentOverride)
+		return rc, err
+	}
+	return config.ResolveRoleAgentConfig(cfg.Role, cfg.TownRoot, cfg.RigPath), nil
 }
 
 // buildCommand creates the startup command using the config package.

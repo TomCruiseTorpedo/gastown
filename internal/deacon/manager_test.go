@@ -3,9 +3,11 @@ package deacon
 import (
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/tmux"
 )
 
@@ -24,6 +26,8 @@ type mockTmux struct {
 	// Call tracking
 	killCalls       []string
 	newSessionCalls int
+	nudgeCalls      []string
+	waitReadyCalls  int
 }
 
 func (m *mockTmux) HasSession(name string) (bool, error) {
@@ -67,6 +71,14 @@ func (m *mockTmux) AcceptBypassPermissionsWarning(_ string) error { return nil }
 func (m *mockTmux) SendKeysRaw(_, _ string) error                 { return m.sendKeysErr }
 func (m *mockTmux) GetSessionInfo(_ string) (*tmux.SessionInfo, error) {
 	return m.sessionInfo, m.sessionInfoErr
+}
+func (m *mockTmux) NudgeSession(_ string, message string) error {
+	m.nudgeCalls = append(m.nudgeCalls, message)
+	return nil
+}
+func (m *mockTmux) WaitForRuntimeReady(_ string, _ *config.RuntimeConfig, _ time.Duration) error {
+	m.waitReadyCalls++
+	return nil
 }
 
 func newTestManager(townRoot string, mock *mockTmux) *Manager {
@@ -251,6 +263,27 @@ func TestStart_WaitForCommandFails(t *testing.T) {
 	}
 	// If config failed before reaching NewSessionWithCommand, that's
 	// acceptable - the WaitForCommand path isn't reachable in test env.
+}
+
+func TestStart_PromptlessAgentRunsStartupFallback(t *testing.T) {
+	mock := &mockTmux{hasSessionResult: false}
+	m := newTestManager(t.TempDir(), mock)
+
+	if err := m.Start("codex"); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
+	if len(mock.nudgeCalls) != 2 {
+		t.Fatalf("nudge calls = %d, want 2", len(mock.nudgeCalls))
+	}
+	if !strings.Contains(mock.nudgeCalls[0], "gt prime") {
+		t.Fatalf("first nudge = %q, want startup fallback command", mock.nudgeCalls[0])
+	}
+	if !strings.Contains(mock.nudgeCalls[1], "I am Deacon. Start patrol") {
+		t.Fatalf("second nudge = %q, want startup prompt fallback", mock.nudgeCalls[1])
+	}
+	if mock.waitReadyCalls == 0 {
+		t.Fatal("expected startup prompt fallback to wait for runtime readiness")
+	}
 }
 
 func TestStop_NotRunning(t *testing.T) {

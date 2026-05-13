@@ -12,6 +12,7 @@ import (
 	"github.com/steveyegge/gastown/internal/acp"
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
+	"github.com/steveyegge/gastown/internal/runtime"
 	"github.com/steveyegge/gastown/internal/session"
 	"github.com/steveyegge/gastown/internal/templates"
 	"github.com/steveyegge/gastown/internal/tmux"
@@ -159,28 +160,33 @@ func (m *Manager) StartTMUX(agentOverride string) error {
 
 	// Use unified session lifecycle for config → settings → command → create → env → theme → wait.
 	theme := tmux.ResolveSessionTheme(m.townRoot, "", "mayor", "")
-	_, err = session.StartSession(t, session.SessionConfig{
+	beacon := session.BeaconConfig{
+		Recipient: "mayor",
+		Sender:    "human",
+		Topic:     "cold-start",
+	}
+	initialPrompt := session.FormatStartupBeacon(beacon)
+	result, err := session.StartSession(t, session.SessionConfig{
 		SessionID:        sessionID,
 		WorkDir:          mayorDir,
 		Role:             "mayor",
 		TownRoot:         m.townRoot,
 		AgentName:        "Mayor",
 		RuntimeConfigDir: claudeConfigDir,
-		Beacon: session.BeaconConfig{
-			Recipient: "mayor",
-			Sender:    "human",
-			Topic:     "cold-start",
-		},
-		AgentOverride: agentOverride,
-		Theme:         theme,
-		WaitForAgent:  true,
-		WaitFatal:     true,
-		AutoRespawn:   true,
-		AcceptBypass:  true,
+		Beacon:           beacon,
+		AgentOverride:    agentOverride,
+		Theme:            theme,
+		WaitForAgent:     true,
+		WaitFatal:        true,
+		AutoRespawn:      true,
+		AcceptBypass:     true,
 	})
 	if err != nil {
 		return err
 	}
+
+	_ = runtime.RunStartupFallback(t, sessionID, "mayor", result.RuntimeConfig)
+	_ = runtime.DeliverStartupPromptFallback(t, sessionID, initialPrompt, result.RuntimeConfig, constants.ClaudeStartTimeout)
 
 	time.Sleep(session.ShutdownDelay())
 

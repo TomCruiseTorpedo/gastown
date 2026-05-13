@@ -12,7 +12,6 @@ import (
 	"github.com/steveyegge/gastown/internal/hooks"
 	"github.com/steveyegge/gastown/internal/hookutil"
 	"github.com/steveyegge/gastown/internal/templates/commands"
-	"github.com/steveyegge/gastown/internal/tmux"
 )
 
 // EnsureSettingsForRole provisions all agent-specific configuration for a role.
@@ -61,6 +60,10 @@ type startupPromptSession interface {
 	WaitForRuntimeReady(sessionID string, rc *config.RuntimeConfig, timeout time.Duration) error
 }
 
+type startupFallbackSession interface {
+	NudgeSession(sessionID, message string) error
+}
+
 // SessionIDFromEnv returns the runtime session ID, if present.
 // It checks GT_SESSION_ID_ENV first, then resolves from the current agent's preset,
 // and falls back to CLAUDE_SESSION_ID for backwards compatibility.
@@ -104,7 +107,7 @@ func StartupFallbackCommands(role string, rc *config.RuntimeConfig) []string {
 }
 
 // RunStartupFallback sends the startup fallback commands via tmux.
-func RunStartupFallback(t *tmux.Tmux, sessionID, role string, rc *config.RuntimeConfig) error {
+func RunStartupFallback(t startupFallbackSession, sessionID, role string, rc *config.RuntimeConfig) error {
 	commands := StartupFallbackCommands(role, rc)
 	for _, cmd := range commands {
 		if err := t.NudgeSession(sessionID, cmd); err != nil {

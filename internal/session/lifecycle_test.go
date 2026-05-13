@@ -109,6 +109,23 @@ func TestBuildCommand_WithAgentOverride(t *testing.T) {
 	}
 }
 
+func TestResolveRuntimeConfig_WithAgentOverride(t *testing.T) {
+	rc, err := resolveRuntimeConfig(SessionConfig{
+		Role:          "mayor",
+		TownRoot:      t.TempDir(),
+		AgentOverride: "codex",
+	})
+	if err != nil {
+		t.Fatalf("resolveRuntimeConfig() error = %v", err)
+	}
+	if rc == nil {
+		t.Fatal("resolveRuntimeConfig() returned nil config")
+	}
+	if rc.PromptMode != "none" {
+		t.Fatalf("PromptMode = %q, want none", rc.PromptMode)
+	}
+}
+
 func TestKillExistingSession_NoSession(t *testing.T) {
 	// KillExistingSession with nil tmux would panic, but we test the logic
 	// by verifying it's callable. Full integration tests need a real tmux.
