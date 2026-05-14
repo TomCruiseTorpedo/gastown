@@ -344,6 +344,9 @@ func outputPluginShowText(p *plugin.Plugin) error {
 	fmt.Printf("%s\n", style.Bold.Render("Gate:"))
 	if p.Gate != nil {
 		fmt.Printf("  Type: %s\n", p.Gate.Type)
+		if p.Gate.Disabled {
+			fmt.Printf("  Disabled: true\n")
+		}
 		if p.Gate.Duration != "" {
 			fmt.Printf("  Duration: %s\n", p.Gate.Duration)
 		}
@@ -425,19 +428,24 @@ func runPluginRun(cmd *cobra.Command, args []string) error {
 	// Check gate status for cooldown gates
 	gateOpen := true
 	gateReason := ""
-	if p.Gate != nil && p.Gate.Type == plugin.GateCooldown && !pluginRunForce {
-		recorder := plugin.NewRecorder(townRoot)
-		duration := p.Gate.Duration
-		if duration == "" {
-			duration = "1h" // default
-		}
-		count, err := recorder.CountRunsSince(p.Name, duration)
-		if err != nil {
-			// Log warning but continue
-			fmt.Fprintf(os.Stderr, "Warning: checking gate status: %v\n", err)
-		} else if count > 0 {
+	if p.Gate != nil && !pluginRunForce {
+		if p.Gate.Disabled {
 			gateOpen = false
-			gateReason = fmt.Sprintf("ran %d time(s) within %s cooldown", count, duration)
+			gateReason = "plugin gate is disabled"
+		} else if p.Gate.Type == plugin.GateCooldown {
+			recorder := plugin.NewRecorder(townRoot)
+			duration := p.Gate.Duration
+			if duration == "" {
+				duration = "1h" // default
+			}
+			count, err := recorder.CountRunsSince(p.Name, duration)
+			if err != nil {
+				// Log warning but continue
+				fmt.Fprintf(os.Stderr, "Warning: checking gate status: %v\n", err)
+			} else if count > 0 {
+				gateOpen = false
+				gateReason = fmt.Sprintf("ran %d time(s) within %s cooldown", count, duration)
+			}
 		}
 	}
 

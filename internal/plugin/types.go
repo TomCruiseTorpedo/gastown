@@ -78,6 +78,9 @@ type Gate struct {
 
 	// On is for event gates (e.g., "startup").
 	On string `json:"on,omitempty" toml:"on,omitempty"`
+
+	// Disabled prevents automatic gate evaluation and dispatch.
+	Disabled bool `json:"disabled,omitempty" toml:"disabled,omitempty"`
 }
 
 // GateType is the type of gate that controls plugin execution.

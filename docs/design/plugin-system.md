@@ -178,6 +178,7 @@ version = 1               # Schema version (for future evolution)
 
 [gate]
 type = "cooldown|cron|condition|event|manual"
+disabled = true|false      # Skip automatic dispatch when true
 # Type-specific fields:
 duration = "1h"           # For cooldown
 schedule = "0 9 * * *"    # For cron

@@ -429,6 +429,41 @@ func TestDispatchPlugins_SkipsManualGatePlugin(t *testing.T) {
 		t.Errorf("dog work = %q, want empty (manual-gate plugin must not auto-dispatch)", dg.Work)
 	}
 }
+
+func TestDispatchPlugins_SkipsDisabledGatePlugin(t *testing.T) {
+	townRoot := t.TempDir()
+	d := testHandlerDaemon(t, townRoot)
+
+	pluginDir := filepath.Join(townRoot, "plugins", "test-disabled")
+	if err := os.MkdirAll(pluginDir, 0755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	pluginMD := "+++\nname = \"test-disabled\"\ndescription = \"disabled plugin\"\n\n[gate]\ntype = \"cooldown\"\nduration = \"1h\"\ndisabled = true\n+++\n\n# Instructions\n"
+	if err := os.WriteFile(filepath.Join(pluginDir, "plugin.md"), []byte(pluginMD), 0644); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+
+	testSetupDogState(t, townRoot, "idle-dog", dog.StateIdle, time.Now().Add(-10*time.Minute))
+
+	rigsConfig := &config.RigsConfig{Version: 1, Rigs: map[string]config.RigEntry{}}
+	mgr := dog.NewManager(townRoot, rigsConfig)
+	tm := tmux.NewTmux()
+	sm := dog.NewSessionManager(tm, townRoot, mgr)
+
+	d.dispatchPlugins(mgr, sm, rigsConfig)
+
+	dg, err := mgr.Get("idle-dog")
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	if dg.State != dog.StateIdle {
+		t.Errorf("dog state = %q, want idle (disabled plugin must not auto-dispatch)", dg.State)
+	}
+	if dg.Work != "" {
+		t.Errorf("dog work = %q, want empty (disabled plugin must not auto-dispatch)", dg.Work)
+	}
+}
+
 func TestFindDispatchableDog_PicksFirstIdleWhenNoSessionsLive(t *testing.T) {
 	townRoot := t.TempDir()
 	d := testHandlerDaemon(t, townRoot)

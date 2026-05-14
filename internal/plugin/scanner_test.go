@@ -198,6 +198,33 @@ type = "cooldown"
 	}
 }
 
+func TestParsePluginMD_DisabledGate(t *testing.T) {
+	content := []byte(`+++
+name = "disabled-plugin"
+description = "Disabled plugin"
+version = 1
+
+[gate]
+type = "cooldown"
+duration = "20h"
+disabled = true
++++
+
+# Disabled Plugin
+`)
+
+	plugin, err := parsePluginMD(content, "/test/path", LocationTown, "")
+	if err != nil {
+		t.Fatalf("parsePluginMD failed: %v", err)
+	}
+	if plugin.Gate == nil {
+		t.Fatal("expected gate to be non-nil")
+	}
+	if !plugin.Gate.Disabled {
+		t.Error("expected gate disabled to be true")
+	}
+}
+
 func TestParsePluginMD_UnknownGateType(t *testing.T) {
 	content := []byte(`+++
 name = "unknown-gate"
