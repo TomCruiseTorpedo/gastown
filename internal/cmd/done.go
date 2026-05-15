@@ -479,6 +479,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 	var mrID string
 	var pushFailed bool
 	var mrFailed bool
+	var mergeQueueSkipped bool
+	var mergeQueueSkipReason string
 	var doneErrors []string
 	var convoyInfo *ConvoyInfo // Populated if issue is tracked by a convoy
 	if exitType == ExitCompleted {
@@ -575,6 +577,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			fmt.Printf("%s Branch has no commits ahead of %s\n", style.Bold.Render("→"), originDefault)
 			fmt.Printf("  Work was likely pushed directly to main or already merged.\n")
 			fmt.Printf("  Skipping MR creation - completing without merge request.\n\n")
+			mergeQueueSkipped = true
+			mergeQueueSkipReason = "no_commits"
 
 			// G15 fix: Close the base issue when completing with no MR.
 			// Without this, no-op polecats (bug already fixed) leave issues stuck
@@ -714,6 +718,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 			}
 			fmt.Println()
 			fmt.Printf("%s\n", style.Dim.Render("Work stays on local feature branch."))
+			mergeQueueSkipped = true
+			mergeQueueSkipReason = "local"
 			goto notifyWitness
 		}
 
@@ -743,6 +749,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				goto notifyWitness
 			}
 			fmt.Printf("%s Branch pushed directly to %s\n", style.Bold.Render("✓"), defaultBranch)
+			mergeQueueSkipped = true
+			mergeQueueSkipReason = "direct"
 
 			// Close the base issue — no MR/refinery will close it
 			if issueID != "" {
@@ -902,6 +910,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 				fmt.Printf("  Branch: %s\n", branch)
 				fmt.Printf("  Issue: %s\n", issueID)
 				fmt.Println()
+				mergeQueueSkipped = true
+				mergeQueueSkipReason = "no_merge"
 
 				// When merge_strategy=pr, create a GitHub PR for human review
 				// instead of just leaving the branch on origin (gas-rfi).
@@ -1054,6 +1064,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					goto notifyWitness
 				}
 				fmt.Printf("%s Branch pushed directly to %s\n", style.Bold.Render("✓"), defaultBranch)
+				mergeQueueSkipped = true
+				mergeQueueSkipReason = "direct"
 
 				// Close the issue directly — refinery won't process it.
 				if issueID != "" {
@@ -1359,13 +1371,15 @@ notifyWitness:
 		// Agent bead lives in town DB despite rig prefix — bypass routing.
 		completionBd := beads.New(cwd).ForAgentBead()
 		meta := &beads.CompletionMetadata{
-			ExitType:       exitType,
-			MRID:           mrID,
-			Branch:         branch,
-			HookBead:       issueID,
-			MRFailed:       mrFailed,
-			PushFailed:     pushFailed,
-			CompletionTime: time.Now().UTC().Format(time.RFC3339),
+			ExitType:             exitType,
+			MRID:                 mrID,
+			Branch:               branch,
+			HookBead:             issueID,
+			MergeQueueSkipped:    mergeQueueSkipped,
+			MergeQueueSkipReason: mergeQueueSkipReason,
+			MRFailed:             mrFailed,
+			PushFailed:           pushFailed,
+			CompletionTime:       time.Now().UTC().Format(time.RFC3339),
 		}
 		if err := completionBd.UpdateAgentCompletion(agentBeadID, meta); err != nil {
 			style.PrintWarning("could not write completion metadata to agent bead: %v", err)

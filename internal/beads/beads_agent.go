@@ -50,12 +50,15 @@ type AgentFields struct {
 	// Completion metadata fields (gt-x7t9).
 	// Written by gt done, read by witness survey-workers to discover
 	// completion state from beads instead of POLECAT_DONE mail.
-	ExitType       string // COMPLETED, ESCALATED, DEFERRED, PHASE_COMPLETE (see witness.ExitType*)
-	MRID           string // MR bead ID (if MR was created)
-	Branch         string // Polecat working branch name
-	MRFailed       bool   // True when MR creation was attempted but failed
-	PushFailed     bool   // True when branch push to origin failed (gas-556)
-	CompletionTime string // RFC3339 timestamp of when gt done was called
+	ExitType             string // COMPLETED, ESCALATED, DEFERRED, PHASE_COMPLETE (see witness.ExitType*)
+	MRID                 string // MR bead ID (if MR was created)
+	Branch               string // Polecat working branch name
+	CompletedHookBead    string // Work bead ID at completion time; active hook_bead may be cleared
+	MergeQueueSkipped    bool   // True when no internal MR/MQ was intentionally created
+	MergeQueueSkipReason string // Reason internal MQ was skipped (no_merge, direct, local, no_commits)
+	MRFailed             bool   // True when MR creation was attempted but failed
+	PushFailed           bool   // True when branch push to origin failed (gas-556)
+	CompletionTime       string // RFC3339 timestamp of when gt done was called
 }
 
 // Notification level constants
@@ -124,6 +127,15 @@ func FormatAgentDescription(title string, fields *AgentFields) string {
 	if fields.Branch != "" {
 		lines = append(lines, fmt.Sprintf("branch: %s", fields.Branch))
 	}
+	if fields.CompletedHookBead != "" {
+		lines = append(lines, fmt.Sprintf("completed_hook_bead: %s", fields.CompletedHookBead))
+	}
+	if fields.MergeQueueSkipped {
+		lines = append(lines, "merge_queue_skipped: true")
+	}
+	if fields.MergeQueueSkipReason != "" {
+		lines = append(lines, fmt.Sprintf("merge_queue_skip_reason: %s", fields.MergeQueueSkipReason))
+	}
 	if fields.MRFailed {
 		lines = append(lines, "mr_failed: true")
 	}
@@ -182,6 +194,12 @@ func ParseAgentFields(description string) *AgentFields {
 			fields.MRID = value
 		case "branch":
 			fields.Branch = value
+		case "completed_hook_bead", "completed-hook-bead", "completedhookbead":
+			fields.CompletedHookBead = value
+		case "merge_queue_skipped", "merge-queue-skipped", "mergequeueskipped":
+			fields.MergeQueueSkipped = value == "true"
+		case "merge_queue_skip_reason", "merge-queue-skip-reason", "mergequeueskipreason":
+			fields.MergeQueueSkipReason = value
 		case "mr_failed":
 			fields.MRFailed = value == "true"
 		case "push_failed":
@@ -411,12 +429,15 @@ type AgentFieldUpdates struct {
 	Mode              *string
 	HookBead          *string // Clear hook_bead on completion (gt-qbh)
 	// Completion metadata fields (gt-x7t9)
-	ExitType       *string
-	MRID           *string
-	Branch         *string
-	MRFailed       *bool
-	PushFailed     *bool // True when branch push to origin failed (gas-556)
-	CompletionTime *string
+	ExitType             *string
+	MRID                 *string
+	Branch               *string
+	CompletedHookBead    *string
+	MergeQueueSkipped    *bool
+	MergeQueueSkipReason *string
+	MRFailed             *bool
+	PushFailed           *bool // True when branch push to origin failed (gas-556)
+	CompletionTime       *string
 }
 
 // UpdateAgentDescriptionFields atomically updates one or more agent description
@@ -480,6 +501,15 @@ func (b *Beads) UpdateAgentDescriptionFields(id string, updates AgentFieldUpdate
 	if updates.Branch != nil {
 		fields.Branch = *updates.Branch
 	}
+	if updates.CompletedHookBead != nil {
+		fields.CompletedHookBead = *updates.CompletedHookBead
+	}
+	if updates.MergeQueueSkipped != nil {
+		fields.MergeQueueSkipped = *updates.MergeQueueSkipped
+	}
+	if updates.MergeQueueSkipReason != nil {
+		fields.MergeQueueSkipReason = *updates.MergeQueueSkipReason
+	}
 	if updates.MRFailed != nil {
 		fields.MRFailed = *updates.MRFailed
 	}
@@ -520,13 +550,15 @@ func (b *Beads) UpdateAgentNotificationLevel(id string, level string) error {
 // step reads these fields to discover completion state from beads
 // instead of POLECAT_DONE mail (nudge-over-mail redesign, gt-x7t9).
 type CompletionMetadata struct {
-	ExitType       string // COMPLETED, ESCALATED, DEFERRED, PHASE_COMPLETE
-	MRID           string // MR bead ID (empty if no MR)
-	Branch         string // Polecat working branch
-	HookBead       string // The work bead ID
-	MRFailed       bool   // True when MR creation was attempted but failed
-	PushFailed     bool   // True when branch push to origin failed (gas-556)
-	CompletionTime string // RFC3339 timestamp
+	ExitType             string // COMPLETED, ESCALATED, DEFERRED, PHASE_COMPLETE
+	MRID                 string // MR bead ID (empty if no MR)
+	Branch               string // Polecat working branch
+	HookBead             string // The work bead ID
+	MergeQueueSkipped    bool   // True when no internal MR/MQ was intentionally created
+	MergeQueueSkipReason string // Reason internal MQ was skipped
+	MRFailed             bool   // True when MR creation was attempted but failed
+	PushFailed           bool   // True when branch push to origin failed (gas-556)
+	CompletionTime       string // RFC3339 timestamp
 }
 
 // UpdateAgentCompletion atomically writes all completion metadata fields
@@ -534,13 +566,17 @@ type CompletionMetadata struct {
 func (b *Beads) UpdateAgentCompletion(id string, meta *CompletionMetadata) error {
 	mrFailed := meta.MRFailed
 	pushFailed := meta.PushFailed
+	mqSkipped := meta.MergeQueueSkipped
 	return b.UpdateAgentDescriptionFields(id, AgentFieldUpdates{
-		ExitType:       &meta.ExitType,
-		MRID:           &meta.MRID,
-		Branch:         &meta.Branch,
-		MRFailed:       &mrFailed,
-		PushFailed:     &pushFailed,
-		CompletionTime: &meta.CompletionTime,
+		ExitType:             &meta.ExitType,
+		MRID:                 &meta.MRID,
+		Branch:               &meta.Branch,
+		CompletedHookBead:    &meta.HookBead,
+		MergeQueueSkipped:    &mqSkipped,
+		MergeQueueSkipReason: &meta.MergeQueueSkipReason,
+		MRFailed:             &mrFailed,
+		PushFailed:           &pushFailed,
+		CompletionTime:       &meta.CompletionTime,
 	})
 }
 
@@ -549,13 +585,17 @@ func (b *Beads) UpdateAgentCompletion(id string, meta *CompletionMetadata) error
 func (b *Beads) ClearAgentCompletion(id string) error {
 	empty := ""
 	notFailed := false
+	notSkipped := false
 	return b.UpdateAgentDescriptionFields(id, AgentFieldUpdates{
-		ExitType:       &empty,
-		MRID:           &empty,
-		Branch:         &empty,
-		MRFailed:       &notFailed,
-		PushFailed:     &notFailed,
-		CompletionTime: &empty,
+		ExitType:             &empty,
+		MRID:                 &empty,
+		Branch:               &empty,
+		CompletedHookBead:    &empty,
+		MergeQueueSkipped:    &notSkipped,
+		MergeQueueSkipReason: &empty,
+		MRFailed:             &notFailed,
+		PushFailed:           &notFailed,
+		CompletionTime:       &empty,
 	})
 }
 

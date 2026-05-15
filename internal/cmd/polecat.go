@@ -1054,6 +1054,7 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		Branch:  p.Branch,
 		Issue:   p.Issue,
 	}
+	status.Issue = recoveryIssueID(status.Issue, fields)
 
 	if err != nil || fields == nil {
 		// No agent bead or no cleanup_status - fall back to git check
@@ -1106,10 +1107,14 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 	// done, which just ran `gt done` again and died, over and over.
 	if status.Verdict == "SAFE_TO_NUKE" && status.Branch != "" {
 		mqBd := beads.New(r.Path)
-		beadTerminal := isAssignedBeadTerminal(mqBd, status.Issue)
-		gitState, gitErr := getGitState(p.ClonePath)
-		hasSubmittableWork := gitErr != nil || gitState.UnpushedCommits > 0
-		applyMQCheck(&status, mqBd, beadTerminal, hasSubmittableWork)
+		if recoveryMergeQueueNotRequired(fields) {
+			status.MQStatus = "not_required"
+		} else {
+			beadTerminal := isAssignedBeadTerminal(mqBd, status.Issue)
+			gitState, gitErr := getGitState(p.ClonePath)
+			hasSubmittableWork := gitErr != nil || gitState.UnpushedCommits > 0
+			applyMQCheck(&status, mqBd, beadTerminal, hasSubmittableWork)
+		}
 	}
 
 	// JSON output
@@ -1170,6 +1175,20 @@ func isActiveMRTerminal(bd issueShower, mrID string) bool {
 		return false
 	}
 	return beads.IssueStatus(mr.Status).IsTerminal()
+}
+
+func recoveryIssueID(activeIssue string, fields *beads.AgentFields) string {
+	if activeIssue != "" {
+		return activeIssue
+	}
+	if fields == nil {
+		return ""
+	}
+	return fields.CompletedHookBead
+}
+
+func recoveryMergeQueueNotRequired(fields *beads.AgentFields) bool {
+	return fields != nil && fields.MergeQueueSkipped
 }
 
 // mrFinder is the subset of *beads.Beads that applyMQCheck needs. It lets us

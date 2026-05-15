@@ -435,15 +435,18 @@ func TestParseAgentFields_AllFields(t *testing.T) {
 
 func TestAgentFieldsCompletionMetadataRoundTrip(t *testing.T) {
 	original := &AgentFields{
-		RoleType:       "polecat",
-		Rig:            "gastown",
-		AgentState:     "done",
-		HookBead:       "gt-abc",
-		ExitType:       "COMPLETED",
-		MRID:           "gt-mr-xyz",
-		Branch:         "polecat/nux/gt-abc@hash",
-		MRFailed:       false,
-		CompletionTime: "2026-02-28T01:00:00Z",
+		RoleType:             "polecat",
+		Rig:                  "gastown",
+		AgentState:           "done",
+		HookBead:             "gt-abc",
+		ExitType:             "COMPLETED",
+		MRID:                 "gt-mr-xyz",
+		Branch:               "polecat/nux/gt-abc@hash",
+		CompletedHookBead:    "gt-abc",
+		MergeQueueSkipped:    true,
+		MergeQueueSkipReason: "no_merge",
+		MRFailed:             false,
+		CompletionTime:       "2026-02-28T01:00:00Z",
 	}
 
 	formatted := FormatAgentDescription("Polecat nux", original)
@@ -457,6 +460,15 @@ func TestAgentFieldsCompletionMetadataRoundTrip(t *testing.T) {
 	}
 	if !strings.Contains(formatted, "branch: polecat/nux/gt-abc@hash") {
 		t.Errorf("missing branch in formatted output:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "completed_hook_bead: gt-abc") {
+		t.Errorf("missing completed_hook_bead in formatted output:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "merge_queue_skipped: true") {
+		t.Errorf("missing merge_queue_skipped in formatted output:\n%s", formatted)
+	}
+	if !strings.Contains(formatted, "merge_queue_skip_reason: no_merge") {
+		t.Errorf("missing merge_queue_skip_reason in formatted output:\n%s", formatted)
 	}
 	if !strings.Contains(formatted, "completion_time: 2026-02-28T01:00:00Z") {
 		t.Errorf("missing completion_time in formatted output:\n%s", formatted)
@@ -476,6 +488,15 @@ func TestAgentFieldsCompletionMetadataRoundTrip(t *testing.T) {
 	}
 	if parsed.Branch != "polecat/nux/gt-abc@hash" {
 		t.Errorf("Branch: got %q, want %q", parsed.Branch, "polecat/nux/gt-abc@hash")
+	}
+	if parsed.CompletedHookBead != "gt-abc" {
+		t.Errorf("CompletedHookBead: got %q, want %q", parsed.CompletedHookBead, "gt-abc")
+	}
+	if !parsed.MergeQueueSkipped {
+		t.Errorf("MergeQueueSkipped: got false, want true")
+	}
+	if parsed.MergeQueueSkipReason != "no_merge" {
+		t.Errorf("MergeQueueSkipReason: got %q, want %q", parsed.MergeQueueSkipReason, "no_merge")
 	}
 	if parsed.MRFailed != false {
 		t.Errorf("MRFailed: got %v, want false", parsed.MRFailed)
@@ -521,7 +542,7 @@ func TestAgentFieldsCompletionOmittedWhenEmpty(t *testing.T) {
 	}
 
 	formatted := FormatAgentDescription("Polecat nux", fields)
-	for _, keyword := range []string{"exit_type:", "mr_id:", "branch:", "mr_failed:", "completion_time:"} {
+	for _, keyword := range []string{"exit_type:", "mr_id:", "branch:", "completed_hook_bead:", "merge_queue_skipped:", "merge_queue_skip_reason:", "mr_failed:", "completion_time:"} {
 		if strings.Contains(formatted, keyword) {
 			t.Errorf("empty completion field %q should not appear in output:\n%s", keyword, formatted)
 		}
@@ -529,13 +550,22 @@ func TestAgentFieldsCompletionOmittedWhenEmpty(t *testing.T) {
 }
 
 func TestParseAgentFields_WithCompletionMetadata(t *testing.T) {
-	desc := "role_type: polecat\nrig: gastown\nagent_state: done\nhook_bead: gt-abc\nexit_type: ESCALATED\nbranch: polecat/nux/gt-abc@hash\nmr_failed: true\ncompletion_time: 2026-02-28T02:00:00Z"
+	desc := "role_type: polecat\nrig: gastown\nagent_state: done\nhook_bead: gt-abc\nexit_type: ESCALATED\nbranch: polecat/nux/gt-abc@hash\ncompleted_hook_bead: gt-abc\nmerge_queue_skipped: true\nmerge_queue_skip_reason: local\nmr_failed: true\ncompletion_time: 2026-02-28T02:00:00Z"
 	got := ParseAgentFields(desc)
 	if got.ExitType != "ESCALATED" {
 		t.Errorf("ExitType = %q, want %q", got.ExitType, "ESCALATED")
 	}
 	if got.Branch != "polecat/nux/gt-abc@hash" {
 		t.Errorf("Branch = %q, want %q", got.Branch, "polecat/nux/gt-abc@hash")
+	}
+	if got.CompletedHookBead != "gt-abc" {
+		t.Errorf("CompletedHookBead = %q, want %q", got.CompletedHookBead, "gt-abc")
+	}
+	if !got.MergeQueueSkipped {
+		t.Errorf("MergeQueueSkipped = false, want true")
+	}
+	if got.MergeQueueSkipReason != "local" {
+		t.Errorf("MergeQueueSkipReason = %q, want %q", got.MergeQueueSkipReason, "local")
 	}
 	if !got.MRFailed {
 		t.Errorf("MRFailed = false, want true")

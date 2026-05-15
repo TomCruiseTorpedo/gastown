@@ -158,3 +158,26 @@ func TestIsActiveMRTerminal(t *testing.T) {
 		})
 	}
 }
+
+func TestRecoveryCompletionMetadata(t *testing.T) {
+	t.Run("completed hook bead used after active hook cleared", func(t *testing.T) {
+		fields := &beads.AgentFields{CompletedHookBead: "gt-done-123"}
+		if got := recoveryIssueID("", fields); got != "gt-done-123" {
+			t.Fatalf("recoveryIssueID() = %q, want completed hook bead", got)
+		}
+	})
+
+	t.Run("active issue takes precedence", func(t *testing.T) {
+		fields := &beads.AgentFields{CompletedHookBead: "gt-done-123"}
+		if got := recoveryIssueID("gt-active-456", fields); got != "gt-active-456" {
+			t.Fatalf("recoveryIssueID() = %q, want active issue", got)
+		}
+	})
+
+	t.Run("merge queue skipped means mq not required", func(t *testing.T) {
+		fields := &beads.AgentFields{MergeQueueSkipped: true, MergeQueueSkipReason: "no_merge"}
+		if !recoveryMergeQueueNotRequired(fields) {
+			t.Fatal("recoveryMergeQueueNotRequired() = false, want true")
+		}
+	})
+}

@@ -99,14 +99,15 @@ const (
 
 // PolecatDonePayload contains parsed data from a POLECAT_DONE message.
 type PolecatDonePayload struct {
-	PolecatName string
-	Exit        string // COMPLETED, ESCALATED, DEFERRED, PHASE_COMPLETE
-	IssueID     string
-	MRID        string
-	Branch      string
-	Gate        string // Gate ID when Exit is PHASE_COMPLETE
-	MRFailed    bool   // True when MR bead creation was attempted but failed
-	PushFailed  bool   // True when branch push to origin failed (gas-556)
+	PolecatName       string
+	Exit              string // COMPLETED, ESCALATED, DEFERRED, PHASE_COMPLETE
+	IssueID           string
+	MRID              string
+	Branch            string
+	Gate              string // Gate ID when Exit is PHASE_COMPLETE
+	MRFailed          bool   // True when MR bead creation was attempted but failed
+	PushFailed        bool   // True when branch push to origin failed (gas-556)
+	MergeQueueSkipped bool   // True when internal MR/MQ was intentionally skipped
 }
 
 // HelpCategory classifies the nature of a help request for routing.
@@ -114,12 +115,12 @@ type HelpCategory string
 
 const (
 	HelpCategoryDecision  HelpCategory = "decision"  // Multiple valid paths, need choice
-	HelpCategoryHelp      HelpCategory = "help"       // Need guidance or expertise
-	HelpCategoryBlocked   HelpCategory = "blocked"    // Waiting on unresolvable dependency
-	HelpCategoryFailed    HelpCategory = "failed"     // Unexpected error, can't proceed
-	HelpCategoryEmergency HelpCategory = "emergency"  // Security or data integrity issue
-	HelpCategoryLifecycle HelpCategory = "lifecycle"   // Worker stuck or needs recycle
-	HelpCategoryUnknown   HelpCategory = "help"        // Default to general help
+	HelpCategoryHelp      HelpCategory = "help"      // Need guidance or expertise
+	HelpCategoryBlocked   HelpCategory = "blocked"   // Waiting on unresolvable dependency
+	HelpCategoryFailed    HelpCategory = "failed"    // Unexpected error, can't proceed
+	HelpCategoryEmergency HelpCategory = "emergency" // Security or data integrity issue
+	HelpCategoryLifecycle HelpCategory = "lifecycle" // Worker stuck or needs recycle
+	HelpCategoryUnknown   HelpCategory = "help"      // Default to general help
 )
 
 // HelpSeverity indicates the assessed urgency of a help request.
@@ -133,10 +134,10 @@ const (
 
 // HelpAssessment contains the assessed category, severity, and routing suggestion.
 type HelpAssessment struct {
-	Category   HelpCategory
-	Severity   HelpSeverity
-	SuggestTo  string // Suggested escalation target (e.g., "deacon", "mayor", "overseer")
-	Rationale  string // Brief explanation of why this classification was chosen
+	Category  HelpCategory
+	Severity  HelpSeverity
+	SuggestTo string // Suggested escalation target (e.g., "deacon", "mayor", "overseer")
+	Rationale string // Brief explanation of why this classification was chosen
 }
 
 // HelpPayload contains parsed data from a HELP message.
@@ -195,8 +196,8 @@ type DispatchAttemptPayload struct {
 
 // DispatchOKPayload contains parsed data from a DISPATCH_OK message.
 type DispatchOKPayload struct {
-	PolecatName string
-	BeadID      string
+	PolecatName  string
+	BeadID       string
 	DispatchedAt time.Time
 }
 
@@ -281,6 +282,8 @@ func ParsePolecatDone(subject, body string) (*PolecatDonePayload, error) {
 			payload.Branch = strings.TrimSpace(strings.TrimPrefix(line, "Branch:"))
 		} else if strings.HasPrefix(line, "MRFailed:") {
 			payload.MRFailed = strings.TrimSpace(strings.TrimPrefix(line, "MRFailed:")) == "true"
+		} else if strings.HasPrefix(line, "MergeQueueSkipped:") {
+			payload.MergeQueueSkipped = strings.TrimSpace(strings.TrimPrefix(line, "MergeQueueSkipped:")) == "true"
 		}
 	}
 

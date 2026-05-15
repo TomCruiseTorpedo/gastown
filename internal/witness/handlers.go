@@ -145,7 +145,7 @@ func HandlePolecatDone(bd *BdCli, workDir, rigName string, msg *mail.Message, ro
 	// fail, query beads to check if an MR bead exists for this branch.
 	// This handles the case where the MR was created but the ID wasn't included
 	// in the POLECAT_DONE message (e.g., message truncation, race condition).
-	if !hasPendingMR && payload.Exit == "COMPLETED" && !payload.MRFailed && payload.Branch != "" {
+	if !hasPendingMR && payload.Exit == "COMPLETED" && !payload.MRFailed && !payload.MergeQueueSkipped && payload.Branch != "" {
 		if mrID := findMRBeadForBranch(bd, workDir, payload.Branch); mrID != "" {
 			payload.MRID = mrID
 			hasPendingMR = true
@@ -189,15 +189,22 @@ func HandlePolecatDoneFromBead(bd *BdCli, workDir, rigName, polecatName string, 
 		return result
 	}
 
-	// Map agent bead fields to the existing PolecatDonePayload for reuse
+	// Map agent bead fields to the existing PolecatDonePayload for reuse.
+	// Active hook_bead may be cleared after completion; completed_hook_bead
+	// preserves the source issue for recovery/audit paths.
+	issueID := fields.HookBead
+	if issueID == "" {
+		issueID = fields.CompletedHookBead
+	}
 	payload := &PolecatDonePayload{
-		PolecatName: polecatName,
-		Exit:        fields.ExitType,
-		IssueID:     fields.HookBead,
-		MRID:        fields.MRID,
-		Branch:      fields.Branch,
-		MRFailed:    fields.MRFailed,
-		PushFailed:  fields.PushFailed,
+		PolecatName:       polecatName,
+		Exit:              fields.ExitType,
+		IssueID:           issueID,
+		MRID:              fields.MRID,
+		Branch:            fields.Branch,
+		MRFailed:          fields.MRFailed,
+		PushFailed:        fields.PushFailed,
+		MergeQueueSkipped: fields.MergeQueueSkipped,
 	}
 
 	if payload.Exit == "PHASE_COMPLETE" {
@@ -227,7 +234,7 @@ func HandlePolecatDoneFromBead(bd *BdCli, workDir, rigName, polecatName string, 
 	hasPendingMR := payload.MRID != ""
 
 	// Same MR-discovery fallback as HandlePolecatDone
-	if !hasPendingMR && payload.Exit == "COMPLETED" && !payload.MRFailed && payload.Branch != "" {
+	if !hasPendingMR && payload.Exit == "COMPLETED" && !payload.MRFailed && !payload.MergeQueueSkipped && payload.Branch != "" {
 		if mrID := findMRBeadForBranch(bd, workDir, payload.Branch); mrID != "" {
 			payload.MRID = mrID
 			hasPendingMR = true
@@ -1947,11 +1954,16 @@ func DiscoverCompletions(bd *BdCli, workDir, rigName string, router *mail.Router
 			continue // No completion metadata — skip
 		}
 
+		issueID := fields.HookBead
+		if issueID == "" {
+			issueID = fields.CompletedHookBead
+		}
+
 		discovery := CompletionDiscovery{
 			PolecatName:    polecatName,
 			AgentBeadID:    agentBeadID,
 			ExitType:       fields.ExitType,
-			IssueID:        fields.HookBead,
+			IssueID:        issueID,
 			MRID:           fields.MRID,
 			Branch:         fields.Branch,
 			MRFailed:       fields.MRFailed,
@@ -1961,13 +1973,14 @@ func DiscoverCompletions(bd *BdCli, workDir, rigName string, router *mail.Router
 
 		// Build a payload compatible with the existing routing logic
 		payload := &PolecatDonePayload{
-			PolecatName: polecatName,
-			Exit:        fields.ExitType,
-			IssueID:     fields.HookBead,
-			MRID:        fields.MRID,
-			Branch:      fields.Branch,
-			MRFailed:    fields.MRFailed,
-			PushFailed:  fields.PushFailed,
+			PolecatName:       polecatName,
+			Exit:              fields.ExitType,
+			IssueID:           issueID,
+			MRID:              fields.MRID,
+			Branch:            fields.Branch,
+			MRFailed:          fields.MRFailed,
+			PushFailed:        fields.PushFailed,
+			MergeQueueSkipped: fields.MergeQueueSkipped,
 		}
 
 		// Route based on exit type and MR presence
@@ -2018,7 +2031,7 @@ func processDiscoveredCompletion(bd *BdCli, workDir, rigName string, payload *Po
 
 	// When Exit==COMPLETED but MRID is empty and MR creation didn't explicitly
 	// fail, query beads to check if an MR bead exists for this branch.
-	if !hasMR && payload.Exit == string(ExitTypeCompleted) && !payload.MRFailed && payload.Branch != "" {
+	if !hasMR && payload.Exit == string(ExitTypeCompleted) && !payload.MRFailed && !payload.MergeQueueSkipped && payload.Branch != "" {
 		if mrID := findMRBeadForBranch(bd, workDir, payload.Branch); mrID != "" {
 			payload.MRID = mrID
 			hasMR = true
@@ -2171,6 +2184,9 @@ func clearCompletionMetadata(bd *BdCli, workDir, agentBeadID string) error {
 	fields.ExitType = ""
 	fields.MRID = ""
 	fields.Branch = ""
+	fields.CompletedHookBead = ""
+	fields.MergeQueueSkipped = false
+	fields.MergeQueueSkipReason = ""
 	fields.MRFailed = false
 	fields.CompletionTime = ""
 
