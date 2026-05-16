@@ -108,6 +108,9 @@ func TestTownBeadsConfigCheck_FixAddsMissingExportAuto(t *testing.T) {
 	if err := os.MkdirAll(beadsDir, 0755); err != nil {
 		t.Fatalf("mkdir .beads: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(beadsDir, "metadata.json"), []byte(`{"backend":"dolt","dolt_mode":"server","dolt_database":"hq"}`), 0644); err != nil {
+		t.Fatalf("write metadata.json: %v", err)
+	}
 	configPath := filepath.Join(beadsDir, "config.yaml")
 	if err := os.WriteFile(configPath, []byte("prefix: hq\nissue-prefix: hq\n"), 0644); err != nil {
 		t.Fatalf("write config.yaml: %v", err)
@@ -118,6 +121,10 @@ func TestTownBeadsConfigCheck_FixAddsMissingExportAuto(t *testing.T) {
 	result := check.Run(ctx)
 	if result.Status != StatusWarning {
 		t.Fatalf("Status = %v, want %v", result.Status, StatusWarning)
+	}
+	details := strings.Join(result.Details, "\n")
+	if !strings.Contains(details, configPath) || !strings.Contains(details, `dolt_database="hq"`) {
+		t.Fatalf("Details missing config or metadata context:\n%s", details)
 	}
 
 	if err := check.Fix(ctx); err != nil {

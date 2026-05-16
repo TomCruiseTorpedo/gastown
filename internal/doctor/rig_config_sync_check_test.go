@@ -224,6 +224,10 @@ func TestRigConfigSyncCheck_FixDisablesRigAutoExport(t *testing.T) {
 	if len(check.missingExportCfg) != 1 || check.missingExportCfg[0] != "testrig" {
 		t.Fatalf("missingExportCfg = %#v, want [testrig]", check.missingExportCfg)
 	}
+	details := strings.Join(result.Details, "\n")
+	if !strings.Contains(details, filepath.Join(beadsDir, "config.yaml")) || !strings.Contains(details, `dolt_mode="embedded"`) {
+		t.Fatalf("Details missing config or metadata context:\n%s", details)
+	}
 
 	if err := check.Fix(ctx); err != nil {
 		t.Fatalf("Fix failed: %v", err)
