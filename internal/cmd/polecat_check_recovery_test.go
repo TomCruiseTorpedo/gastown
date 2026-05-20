@@ -393,6 +393,41 @@ func TestHasSubmittableWorkForRecoveryFallback(t *testing.T) {
 	}
 }
 
+func TestGetGitStateUsesRecoveryBaseUpstream(t *testing.T) {
+	repo := setupRecoveryGitRepo(t)
+	writeRecoveryFile(t, filepath.Join(repo, "integration.txt"), "integration")
+	runGit(t, repo, "add", "integration.txt")
+	runGit(t, repo, "commit", "-m", "integration")
+	runGit(t, repo, "push", "origin", "integration/test")
+	runGit(t, repo, "branch", "-f", "main", "integration/test")
+	runGit(t, repo, "switch", "main")
+	runGit(t, repo, "branch", "--set-upstream-to=origin/integration/test")
+
+	state, err := getGitState(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Clean || state.UnpushedCommits != 0 {
+		t.Fatalf("clean main tracking integration should not need recovery: clean=%v unpushed=%d", state.Clean, state.UnpushedCommits)
+	}
+}
+
+func TestGetGitStatePreservesUnpushedBaseBranchWork(t *testing.T) {
+	repo := setupRecoveryGitRepo(t)
+	runGit(t, repo, "switch", "main")
+	writeRecoveryFile(t, filepath.Join(repo, "local.txt"), "local")
+	runGit(t, repo, "add", "local.txt")
+	runGit(t, repo, "commit", "-m", "local")
+
+	state, err := getGitState(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Clean || state.UnpushedCommits != 1 {
+		t.Fatalf("unpushed main work should need recovery: clean=%v unpushed=%d", state.Clean, state.UnpushedCommits)
+	}
+}
+
 func setupRecoveryGitRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()

@@ -967,10 +967,12 @@ func getGitState(worktreePath string) (*GitState, error) {
 		state.Clean = false
 	}
 
-	// Check for unpushed commits (git log origin/main..HEAD)
+	// Check for unpushed commits. Recovery base branches may intentionally track
+	// an integration branch, so compare them to their upstream instead of always
+	// comparing to origin/main.
 	// We check commits first, then verify if content differs.
 	// After squash merge, commits may differ but content may be identical.
-	mainRef := "origin/main"
+	mainRef := gitStateComparisonRef(worktreePath)
 	logCmd := exec.Command("git", "log", mainRef+"..HEAD", "--oneline")
 	logCmd.Dir = worktreePath
 	output, err = logCmd.Output()
@@ -1023,6 +1025,27 @@ func getGitState(worktreePath string) (*GitState, error) {
 	}
 
 	return state, nil
+}
+
+func gitStateComparisonRef(worktreePath string) string {
+	branchCmd := exec.Command("git", "branch", "--show-current")
+	branchCmd.Dir = worktreePath
+	branchOut, branchErr := branchCmd.Output()
+	branch := strings.TrimSpace(string(branchOut))
+
+	if branchErr == nil && isRecoveryBaseBranch(branch) {
+		upstreamCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "@{u}")
+		upstreamCmd.Dir = worktreePath
+		if upstreamOut, upstreamErr := upstreamCmd.Output(); upstreamErr == nil {
+			upstream := strings.TrimSpace(string(upstreamOut))
+			upstreamBranch := strings.TrimPrefix(upstream, "origin/")
+			if upstream != "" && isRecoveryBaseBranch(upstreamBranch) {
+				return upstream
+			}
+		}
+	}
+
+	return "origin/main"
 }
 
 // RecoveryStatus represents whether a polecat needs recovery or is safe to nuke.
