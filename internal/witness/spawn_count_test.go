@@ -1,8 +1,10 @@
 package witness
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -24,6 +26,50 @@ func TestRecordBeadRespawn_Increments(t *testing.T) {
 	count = RecordBeadRespawn(tmpDir, "bead-1")
 	if count != 2 {
 		t.Errorf("second RecordBeadRespawn = %d, want 2", count)
+	}
+}
+
+func TestRecordBeadRespawnAttempt_RecordsBoundedRecentContext(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "witness"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 1; i <= maxRecentRespawnAttempts+1; i++ {
+		count := RecordBeadRespawnAttempt(tmpDir, "bead-history", fmt.Sprintf("attempt-%d", i))
+		if count != i {
+			t.Fatalf("RecordBeadRespawnAttempt count = %d, want %d", count, i)
+		}
+	}
+
+	state := loadBeadRespawnState(tmpDir)
+	rec := state.Beads["bead-history"]
+	if rec == nil {
+		t.Fatal("bead-history record not found")
+	}
+	if len(rec.RecentAttempts) != maxRecentRespawnAttempts {
+		t.Fatalf("recent attempts length = %d, want %d", len(rec.RecentAttempts), maxRecentRespawnAttempts)
+	}
+	if rec.RecentAttempts[0].Reason != "attempt-2" {
+		t.Errorf("oldest retained reason = %q, want attempt-2", rec.RecentAttempts[0].Reason)
+	}
+	if rec.RecentAttempts[len(rec.RecentAttempts)-1].Timestamp.IsZero() {
+		t.Error("recent attempt timestamp was not recorded")
+	}
+
+	summary := RecentBeadRespawnSummary(tmpDir, "bead-history")
+	if strings.Contains(summary, "attempt-1") {
+		t.Errorf("summary contains trimmed attempt: %q", summary)
+	}
+	if !strings.Contains(summary, "attempt-6") {
+		t.Errorf("summary missing newest attempt: %q", summary)
+	}
+}
+
+func TestRecentBeadRespawnSummary_UnknownBead(t *testing.T) {
+	tmpDir := t.TempDir()
+	if got := RecentBeadRespawnSummary(tmpDir, "missing"); got != "none recorded" {
+		t.Errorf("RecentBeadRespawnSummary = %q, want none recorded", got)
 	}
 }
 

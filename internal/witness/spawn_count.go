@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,11 +19,19 @@ import (
 // sibling .flock file (see RecordBeadRespawn, ShouldBlockRespawn, etc.).
 var respawnMu sync.Mutex
 
+const maxRecentRespawnAttempts = 5
+
+type beadRespawnAttempt struct {
+	Timestamp time.Time `json:"timestamp"`
+	Reason    string    `json:"reason"`
+}
+
 // beadRespawnRecord tracks how many times a single bead has been reset for re-dispatch.
 type beadRespawnRecord struct {
-	BeadID      string    `json:"bead_id"`
-	Count       int       `json:"count"`
-	LastRespawn time.Time `json:"last_respawn"`
+	BeadID         string               `json:"bead_id"`
+	Count          int                  `json:"count"`
+	LastRespawn    time.Time            `json:"last_respawn"`
+	RecentAttempts []beadRespawnAttempt `json:"recent_attempts,omitempty"`
 }
 
 // beadRespawnState holds respawn counts for all tracked beads.
@@ -100,6 +109,11 @@ func ShouldBlockRespawn(workDir, beadID string) bool {
 // Serialized via respawnMu (in-process) and flock (cross-process) to prevent
 // concurrent patrol cycles from racing on the load-modify-save cycle.
 func RecordBeadRespawn(workDir, beadID string) int {
+	return RecordBeadRespawnAttempt(workDir, beadID, "unspecified respawn attempt")
+}
+
+// RecordBeadRespawnAttempt increments the respawn count and records recent context.
+func RecordBeadRespawnAttempt(workDir, beadID, reason string) int {
 	respawnMu.Lock()
 	defer respawnMu.Unlock()
 
@@ -120,10 +134,56 @@ func RecordBeadRespawn(workDir, beadID string) int {
 		rec = &beadRespawnRecord{BeadID: beadID}
 		state.Beads[beadID] = rec
 	}
+	now := time.Now().UTC()
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "unspecified respawn attempt"
+	}
 	rec.Count++
-	rec.LastRespawn = time.Now().UTC()
+	rec.LastRespawn = now
+	rec.RecentAttempts = append(rec.RecentAttempts, beadRespawnAttempt{
+		Timestamp: now,
+		Reason:    reason,
+	})
+	if len(rec.RecentAttempts) > maxRecentRespawnAttempts {
+		rec.RecentAttempts = rec.RecentAttempts[len(rec.RecentAttempts)-maxRecentRespawnAttempts:]
+	}
 	_ = saveBeadRespawnState(townRoot, state) // Non-fatal: tracking failure must not block respawn
 	return rec.Count
+}
+
+// RecentBeadRespawnSummary returns operator-facing recent attempt context.
+func RecentBeadRespawnSummary(workDir, beadID string) string {
+	respawnMu.Lock()
+	defer respawnMu.Unlock()
+
+	townRoot, err := workspace.Find(workDir)
+	if err != nil || townRoot == "" {
+		townRoot = workDir
+	}
+
+	unlock, flockErr := lock.FlockAcquire(beadRespawnStateFile(townRoot) + ".flock")
+	if flockErr == nil {
+		defer unlock()
+	}
+
+	state := loadBeadRespawnState(townRoot)
+	rec, ok := state.Beads[beadID]
+	if !ok || len(rec.RecentAttempts) == 0 {
+		return "none recorded"
+	}
+
+	var b strings.Builder
+	for _, attempt := range rec.RecentAttempts {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("- ")
+		b.WriteString(attempt.Timestamp.Format(time.RFC3339))
+		b.WriteString(": ")
+		b.WriteString(attempt.Reason)
+	}
+	return b.String()
 }
 
 // ResetBeadRespawnCount resets the respawn counter for beadID to zero.
