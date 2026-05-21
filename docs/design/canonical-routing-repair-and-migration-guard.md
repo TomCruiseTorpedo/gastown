@@ -102,7 +102,8 @@ The diagnostic guard for `routes.jsonl` reports:
 - non-clean paths such as `rig/./mayor/rig`;
 - duplicate prefixes;
 - duplicate non-town route paths;
-- non-town prefixes mapping to `.`.
+- non-town prefixes mapping to `.`;
+- town prefixes such as `hq-` or `hq-cv-` mapping away from `.`.
 
 This guard catches drift before `LoadRoutes` can silently skip malformed entries and before `gt doctor --fix` can rewrite a damaged file.
 
