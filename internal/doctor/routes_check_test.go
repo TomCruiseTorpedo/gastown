@@ -42,6 +42,9 @@ func TestRoutesCheck_MissingTownRoute(t *testing.T) {
 		if result.Message != "Required town routes are missing" {
 			t.Errorf("expected 'Required town routes are missing', got %s", result.Message)
 		}
+		if strings.Contains(result.FixHint, "Repair routes.jsonl") {
+			t.Errorf("expected auto-fix hint for well-formed routes, got %q", result.FixHint)
+		}
 	})
 
 	t.Run("passes when town root route exists", func(t *testing.T) {

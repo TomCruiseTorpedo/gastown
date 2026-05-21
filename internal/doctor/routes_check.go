@@ -130,12 +130,16 @@ func (c *RoutesCheck) Run(ctx *CheckContext) *CheckResult {
 			} else if len(routeShapeDetails) > 0 {
 				message += fmt.Sprintf(", %d malformed route definition(s)", len(routeShapeDetails))
 			}
+			fixHint := "Run 'gt doctor --fix' to add missing routes"
+			if len(routeShapeDetails) > 0 {
+				fixHint = "Repair routes.jsonl, then run 'gt doctor --fix' to add missing routes"
+			}
 			return &CheckResult{
 				Name:    c.Name(),
 				Status:  StatusWarning,
 				Message: message,
 				Details: details,
-				FixHint: "Repair routes.jsonl, then run 'gt doctor --fix' to add missing routes",
+				FixHint: fixHint,
 			}
 		}
 		return c.checkRoutesValid(ctx, routes)
