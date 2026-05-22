@@ -349,6 +349,12 @@ func TestResolveTargetRigPassesHeldAdmissionToSpawn(t *testing.T) {
 
 func TestExecuteSlingHoldsAdmissionUntilHookAttempt(t *testing.T) {
 	townRoot := setupPolecatCapacityRig(t, 1)
+	if err := os.MkdirAll(filepath.Join(townRoot, ".beads"), 0755); err != nil {
+		t.Fatalf("mkdir town beads: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(townRoot, ".beads", "routes.jsonl"), []byte("{\"prefix\":\"gt-\",\"path\":\"gastown\"}\n"), 0644); err != nil {
+		t.Fatalf("write routes: %v", err)
+	}
 	if err := os.MkdirAll(filepath.Join(townRoot, "gastown", ".beads"), 0755); err != nil {
 		t.Fatalf("mkdir rig beads: %v", err)
 	}
