@@ -29,13 +29,13 @@ func resolveCommandMRTarget(townRoot, rigName, defaultBranch, issueID, explicitT
 	}
 
 	return mrtarget.Resolve(mrtarget.Options{
-		DefaultBranch:  defaultBranch,
-		ExplicitTarget: explicitTarget,
-		SourceIssue:    sourceIssue,
-		IssueID:        issueID,
+		DefaultBranch:      defaultBranch,
+		ExplicitTarget:     explicitTarget,
+		SourceIssue:        sourceIssue,
+		IssueID:            issueID,
 		ResolveIntegration: resolveIntegration,
-		Checker:        g,
-		CheckRemote:    true,
+		Checker:            g,
+		CheckRemote:        true,
 	})
 }
 

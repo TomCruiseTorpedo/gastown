@@ -22,6 +22,7 @@ import (
 	"github.com/steveyegge/gastown/internal/events"
 	"github.com/steveyegge/gastown/internal/git"
 	"github.com/steveyegge/gastown/internal/mail"
+	"github.com/steveyegge/gastown/internal/mrtarget"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/util"
 )
@@ -1133,6 +1134,12 @@ func (e *Engineer) syncCrewWorkspaces() {
 
 // ProcessMRInfo processes a merge request from MRInfo.
 func (e *Engineer) ProcessMRInfo(ctx context.Context, mr *MRInfo) ProcessResult {
+	targetResult, targetErr := mrtarget.ValidateReadback(mr.Target, e.rig.DefaultBranch(), e.git, true)
+	if targetErr != nil {
+		return ProcessResult{Error: fmt.Sprintf("invalid MR target: %v", targetErr)}
+	}
+	mr.Target = targetResult.Branch
+
 	// MR fields are directly on the struct
 	_, _ = fmt.Fprintln(e.output, "[Engineer] Processing MR:")
 	_, _ = fmt.Fprintf(e.output, "  Branch: %s\n", mr.Branch)
@@ -1533,7 +1540,12 @@ func (e *Engineer) IsBeadOpen(beadID string) (bool, error) {
 
 // issueToMRInfo converts a beads issue (with parsed MR fields) into an MRInfo.
 // Shared by ListReadyMRs, ListBlockedMRs, and ListAllOpenMRs.
-func issueToMRInfo(issue *beads.Issue, fields *beads.MRFields) *MRInfo {
+func issueToMRInfo(issue *beads.Issue, fields *beads.MRFields, defaultBranch string) (*MRInfo, error) {
+	targetResult, err := mrtarget.ValidateReadback(fields.Target, defaultBranch, nil, false)
+	if err != nil {
+		return nil, err
+	}
+
 	// Parse convoy created_at if present
 	var convoyCreatedAt *time.Time
 	if fields.ConvoyCreatedAt != "" {
@@ -1566,7 +1578,7 @@ func issueToMRInfo(issue *beads.Issue, fields *beads.MRFields) *MRInfo {
 	return &MRInfo{
 		ID:              issue.ID,
 		Branch:          fields.Branch,
-		Target:          fields.Target,
+		Target:          targetResult.Branch,
 		SourceIssue:     fields.SourceIssue,
 		Worker:          fields.Worker,
 		Rig:             fields.Rig,
@@ -1582,7 +1594,7 @@ func issueToMRInfo(issue *beads.Issue, fields *beads.MRFields) *MRInfo {
 		CreatedAt:       createdAt,
 		UpdatedAt:       updatedAt,
 		Assignee:        issue.Assignee,
-	}
+	}, nil
 }
 
 // firstOpenBlocker returns the ID of the first open blocker for an issue,
@@ -1665,7 +1677,12 @@ func (e *Engineer) ListReadyMRs() ([]*MRInfo, error) {
 				issue.ID, issue.Assignee, issue.UpdatedAt)
 		}
 
-		mrs = append(mrs, issueToMRInfo(issue, fields))
+		mr, targetErr := issueToMRInfo(issue, fields, e.rig.DefaultBranch())
+		if targetErr != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Skipping MR %s with invalid target: %v\n", issue.ID, targetErr)
+			continue
+		}
+		mrs = append(mrs, mr)
 	}
 
 	return mrs, nil
@@ -1710,7 +1727,11 @@ func (e *Engineer) ListBlockedMRs() ([]*MRInfo, error) {
 			continue
 		}
 
-		mr := issueToMRInfo(issue, fields)
+		mr, targetErr := issueToMRInfo(issue, fields, e.rig.DefaultBranch())
+		if targetErr != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Skipping blocked MR %s with invalid target: %v\n", issue.ID, targetErr)
+			continue
+		}
 		mr.BlockedBy = blockedBy
 		mrs = append(mrs, mr)
 	}
@@ -1749,7 +1770,11 @@ func (e *Engineer) ListAllOpenMRs() ([]*MRInfo, error) {
 			continue
 		}
 
-		mr := issueToMRInfo(issue, fields)
+		mr, targetErr := issueToMRInfo(issue, fields, e.rig.DefaultBranch())
+		if targetErr != nil {
+			_, _ = fmt.Fprintf(e.output, "[Engineer] Skipping MR %s with invalid target: %v\n", issue.ID, targetErr)
+			continue
+		}
 
 		// Check branch existence (local + remote tracking refs)
 		mr.BranchExistsLocal, _ = e.git.BranchExists(fields.Branch)

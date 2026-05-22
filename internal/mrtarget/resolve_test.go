@@ -75,7 +75,7 @@ func TestResolveAcceptedTargets(t *testing.T) {
 func TestResolveRejectsConflictingDuplicateBaseBranch(t *testing.T) {
 	_, err := Resolve(Options{
 		DefaultBranch: "main",
-		FormulaVars:    "base_branch=integration/a\nbase_branch=integration/b",
+		FormulaVars:   "base_branch=integration/a\nbase_branch=integration/b",
 	})
 	if err == nil || !strings.Contains(err.Error(), "conflicting") {
 		t.Fatalf("Resolve() error = %v, want conflicting duplicate base_branch", err)

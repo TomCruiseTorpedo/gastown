@@ -18,6 +18,7 @@ import (
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/constants"
 	"github.com/steveyegge/gastown/internal/git"
+	"github.com/steveyegge/gastown/internal/mrtarget"
 	"github.com/steveyegge/gastown/internal/nudge"
 	"github.com/steveyegge/gastown/internal/rig"
 	"github.com/steveyegge/gastown/internal/runtime"
@@ -451,10 +452,10 @@ func (m *Manager) issueToMR(issue *beads.Issue) *MergeRequest {
 		}
 	}
 
-	// Default target to rig's default branch if not specified
-	target := fields.Target
-	if target == "" {
-		target = defaultBranch
+	targetResult, err := mrtarget.ValidateReadback(fields.Target, defaultBranch, nil, false)
+	if err != nil {
+		_, _ = fmt.Fprintf(m.output, "Warning: skipping MR %s with invalid target: %v\n", issue.ID, err)
+		return nil
 	}
 
 	return &MergeRequest{
@@ -462,7 +463,7 @@ func (m *Manager) issueToMR(issue *beads.Issue) *MergeRequest {
 		Branch:       fields.Branch,
 		Worker:       fields.Worker,
 		IssueID:      fields.SourceIssue,
-		TargetBranch: target,
+		TargetBranch: targetResult.Branch,
 		MergeCommit:  fields.MergeCommit,
 		Status:       MROpen,
 		CreatedAt:    parseTime(issue.CreatedAt),

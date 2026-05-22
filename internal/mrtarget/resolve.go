@@ -18,10 +18,10 @@ type BranchChecker interface {
 type Source string
 
 const (
-	SourceDefault   Source = "default"
-	SourceExplicit  Source = "explicit"
-	SourceFormula   Source = "formula_vars"
-	SourceAutoEpic  Source = "auto_epic"
+	SourceDefault    Source = "default"
+	SourceExplicit   Source = "explicit"
+	SourceFormula    Source = "formula_vars"
+	SourceAutoEpic   Source = "auto_epic"
 	SourceMRReadback Source = "mr_readback"
 )
 
@@ -33,7 +33,7 @@ type Result struct {
 
 // Options controls target resolution for MR producers.
 type Options struct {
-	DefaultBranch string
+	DefaultBranch  string
 	ExplicitTarget string
 	FormulaVars    string
 	SourceIssue    *beads.Issue
@@ -42,10 +42,10 @@ type Options struct {
 	ResolveIntegration func(issueID string) (string, error)
 	Checker            BranchChecker
 
-	CheckRemote           bool
-	AllowMissingOrigin    bool
-	AllowStaleRCA         bool
-	AllowExplicitDefault  bool
+	CheckRemote          bool
+	AllowMissingOrigin   bool
+	AllowStaleRCA        bool
+	AllowExplicitDefault bool
 }
 
 // Resolve chooses and validates one MR target branch. Precedence is:
