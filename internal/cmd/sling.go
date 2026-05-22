@@ -734,6 +734,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		}
 		fmt.Printf("%s %s, rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), reason, newPolecatInfo.PolecatName)
 		rollbackSlingArtifactsFn(newPolecatInfo, beadID, hookWorkDir, "")
+		newPolecatInfo.ReleaseAdmissionReservation()
 		// Under --force, rollback's unhook can clear a pinned bead's original state.
 		if force && originalStatus == "pinned" {
 			restorePinnedBead(townRoot, beadID, originalAssignee)
@@ -978,6 +979,9 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		rollbackSpawnedPolecat("Hook write failed")
 		return err
 	}
+	if newPolecatInfo != nil {
+		newPolecatInfo.ReleaseAdmissionReservation()
+	}
 
 	// Emit a propulsion signal if the target is the mayor.
 	// This allows the ACP propeller to react to hook changes event-driven.
@@ -1058,6 +1062,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 			// Without rollback, next sling attempt fails with "bead already hooked" (gt-jn40ft).
 			fmt.Printf("%s Session failed, rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), newPolecatInfo.PolecatName)
 			rollbackSlingArtifactsFn(newPolecatInfo, beadID, hookWorkDir, "")
+			newPolecatInfo.ReleaseAdmissionReservation()
 			return fmt.Errorf("starting polecat session: %w", err)
 		}
 		targetPane = pane

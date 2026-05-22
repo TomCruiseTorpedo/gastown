@@ -38,6 +38,7 @@ type SlingParams struct {
 	NoBoot       bool     // --no-boot
 	Mode         string   // --ralph: "" (normal) or "ralph"
 	ReviewOnly   bool     // --review-only: review and report back only, no merge/commit/push
+	AdmissionMax int      // Scheduler/direct capacity limit to hold through durable hook assignment
 
 	// Execution behavior (set by caller, not serialized to queue)
 	SkipCook         bool   // Batch optimization: formula already cooked
@@ -236,6 +237,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		Agent:        params.Agent,
 		BaseBranch:   params.BaseBranch,
 		ResumeBranch: params.ResumeBranch,
+		AdmissionMax: params.AdmissionMax,
 		// Create is always true for rig targets: executeSling only handles
 		// rig-targeted dispatch (batch sling + queue dispatch), where a fresh
 		// polecat must be spawned. The single-sling path (runSling) handles
@@ -278,6 +280,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 			if params.FormulaFailFatal {
 				// Rollback spawned polecat on fatal cook failure
 				rollbackSlingArtifactsFn(spawnInfo, params.BeadID, hookWorkDir, convoyID)
+				spawnInfo.ReleaseAdmissionReservation()
 				result.ErrMsg = fmt.Sprintf("cook failed: %v", err)
 				return result, fmt.Errorf("cooking formula %s: %w", params.FormulaName, err)
 			}
@@ -313,6 +316,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 			if params.FormulaFailFatal {
 				// Rollback spawned polecat on fatal formula failure
 				rollbackSlingArtifactsFn(spawnInfo, params.BeadID, hookWorkDir, convoyID)
+				spawnInfo.ReleaseAdmissionReservation()
 				result.ErrMsg = fmt.Sprintf("formula failed: %v", err)
 				return result, fmt.Errorf("instantiating formula %s: %w", params.FormulaName, err)
 			}
@@ -343,6 +347,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 		result.ErrMsg = "hook failed"
 		return result, fmt.Errorf("failed to hook bead: %w", err)
 	}
+	spawnInfo.ReleaseAdmissionReservation()
 
 	fmt.Printf("  %s Work attached to %s\n", style.Bold.Render("✓"), spawnInfo.PolecatName)
 
@@ -380,6 +385,7 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 	if err != nil {
 		fmt.Printf("  %s Could not start session: %v, cleaning up partial state...\n", style.Dim.Render("✗"), err)
 		rollbackSlingArtifactsFn(spawnInfo, beadToHook, hookWorkDir, convoyID)
+		spawnInfo.ReleaseAdmissionReservation()
 		result.ErrMsg = fmt.Sprintf("session failed: %v", err)
 		return result, fmt.Errorf("starting polecat session: %w", err)
 	}

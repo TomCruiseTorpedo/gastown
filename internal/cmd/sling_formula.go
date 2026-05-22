@@ -146,6 +146,7 @@ func runSlingFormula(ctx context.Context, args []string) error {
 		}
 		fmt.Printf("%s Rolling back spawned polecat %s...\n", style.Warning.Render("⚠"), resolved.NewPolecatInfo.PolecatName)
 		rollbackSlingArtifactsFn(resolved.NewPolecatInfo, beadID, formulaWorkDir, "")
+		resolved.NewPolecatInfo.ReleaseAdmissionReservation()
 	}
 
 	// Resolve working directory for bd commands (routes to correct rig beads)
@@ -236,7 +237,11 @@ func runSlingFormula(ctx context.Context, args []string) error {
 	// See: https://github.com/steveyegge/gastown/issues/148.
 	hookDir := beads.ResolveHookDir(townRoot, wispRootID, "")
 	if err := hookBeadWithRetry(wispRootID, targetAgent, hookDir); err != nil {
+		rollbackSpawned(wispRootID)
 		return err
+	}
+	if resolved.NewPolecatInfo != nil {
+		resolved.NewPolecatInfo.ReleaseAdmissionReservation()
 	}
 	fmt.Printf("%s Attached to hook (status=hooked)\n", style.Bold.Render("✓"))
 
@@ -285,6 +290,7 @@ func runSlingFormula(ctx context.Context, args []string) error {
 		if err != nil {
 			// Rollback: unhook wisp, delete Dolt branch, clean up polecat worktree/agent bead
 			rollbackSlingArtifactsFn(resolved.NewPolecatInfo, wispRootID, "", "")
+			resolved.NewPolecatInfo.ReleaseAdmissionReservation()
 			return fmt.Errorf("starting polecat session: %w", err)
 		}
 		targetPane = pane

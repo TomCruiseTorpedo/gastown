@@ -32,6 +32,7 @@ type SpawnedPolecatInfo struct {
 	Pane        string // Tmux pane ID (empty until StartSession is called)
 	BaseBranch  string // Effective base branch (e.g., "main", "integration/epic-id")
 	Branch      string // Git branch name (for cleanup on rollback)
+	admission   *admissionReservation
 
 	// Internal fields for deferred session start
 	account string
@@ -57,6 +58,7 @@ type SlingSpawnOptions struct {
 	Agent        string // Agent override for this spawn (e.g., "gemini", "codex", "claude-haiku")
 	BaseBranch   string // Override base branch for polecat worktree (e.g., "develop", "release/v2")
 	ResumeBranch string // Resume an existing branch (e.g. PR head) instead of creating polecat/<name>/<bead>@<ts>
+	AdmissionMax int    // Capacity limit to reserve against; <=0 uses the direct-dispatch safety cap
 }
 
 // SpawnPolecatForSling creates a fresh polecat and optionally starts its session.
@@ -104,16 +106,26 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 	// too many working polecats. This is a last-resort safety net for the direct-dispatch
 	// path. For configurable capacity gating, use scheduler.max_polecats in town settings
 	// (see internal/scheduler/capacity/).
-	// Uses countWorkingPolecats to exclude idle polecats (completed work, no hook bead)
-	// that are available for re-sling under the persistent polecat model.
+	// Hold a reservation until hook attachment succeeds or rollback completes so
+	// concurrent dispatchers cannot all pass the count before any hook is durable.
 	const defaultMaxActivePolecats = 25
-	workingCount := countWorkingPolecats()
-	if workingCount >= defaultMaxActivePolecats {
-		return nil, fmt.Errorf("polecat cap reached: %d working polecats (max %d). "+
-			"This is a safety limit to prevent spawn storms. "+
-			"Investigate why polecats are accumulating before spawning more",
-			workingCount, defaultMaxActivePolecats)
+	admissionMax := opts.AdmissionMax
+	if admissionMax <= 0 {
+		admissionMax = defaultMaxActivePolecats
 	}
+	admission, err := reservePolecatAdmission(townRoot, admissionMax)
+	if err != nil {
+		if errors.Is(err, ErrPolecatAdmissionDenied) {
+			return nil, fmt.Errorf("polecat cap reached: %w. This is a safety limit to prevent spawn storms. Investigate why polecats are accumulating before spawning more", err)
+		}
+		return nil, err
+	}
+	keepAdmission := false
+	defer func() {
+		if !keepAdmission {
+			admission.Release()
+		}
+	}()
 
 	// Per-bead respawn circuit breaker (clown show #22):
 	// Track how many times this bead has been slung. Block after N attempts
@@ -210,6 +222,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 				effectiveBranch = opts.ResumeBranch
 			}
 
+			keepAdmission = true
 			return &SpawnedPolecatInfo{
 				RigName:     rigName,
 				PolecatName: polecatName,
@@ -218,6 +231,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 				Pane:        "",
 				BaseBranch:  effectiveBranch,
 				Branch:      polecatObj.Branch,
+				admission:   admission,
 				account:     opts.Account,
 				agent:       opts.Agent,
 			}, nil
@@ -321,6 +335,7 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		effectiveBranch = opts.ResumeBranch
 	}
 
+	keepAdmission = true
 	return &SpawnedPolecatInfo{
 		RigName:     rigName,
 		PolecatName: polecatName,
@@ -329,9 +344,17 @@ func SpawnPolecatForSling(rigName string, opts SlingSpawnOptions) (*SpawnedPolec
 		Pane:        "", // Empty until StartSession is called
 		BaseBranch:  effectiveBranch,
 		Branch:      polecatObj.Branch,
+		admission:   admission,
 		account:     opts.Account,
 		agent:       opts.Agent,
 	}, nil
+}
+
+func (s *SpawnedPolecatInfo) ReleaseAdmissionReservation() {
+	if s == nil {
+		return
+	}
+	s.admission.Release()
 }
 
 // StartSession starts the tmux session for a spawned polecat.

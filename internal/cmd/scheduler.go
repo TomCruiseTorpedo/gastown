@@ -143,12 +143,12 @@ func runSchedulerStatus(cmd *cobra.Command, args []string) error {
 
 	if schedulerStatusJSON {
 		out := struct {
-			Paused         bool               `json:"paused"`
-			PausedBy       string             `json:"paused_by,omitempty"`
-			ScheduledTotal int                `json:"queued_total"`
-			ScheduledReady int                `json:"queued_ready"`
-			ActivePolecats int                `json:"active_polecats"`
-			LastDispatchAt string             `json:"last_dispatch_at,omitempty"`
+			Paused         bool                `json:"paused"`
+			PausedBy       string              `json:"paused_by,omitempty"`
+			ScheduledTotal int                 `json:"queued_total"`
+			ScheduledReady int                 `json:"queued_ready"`
+			ActivePolecats int                 `json:"active_polecats"`
+			LastDispatchAt string              `json:"last_dispatch_at,omitempty"`
 			Beads          []scheduledBeadInfo `json:"beads"`
 		}{
 			Paused:         state.Paused,
@@ -491,14 +491,17 @@ func countActivePolecats() int {
 	return count
 }
 
-// countWorkingPolecats counts polecat sessions that are actively working.
-// A polecat is "working" if its agent bead has a non-null hook_bead.
+// countWorkingPolecats counts polecats with durable work assignment.
 // Idle polecats (completed work, hook_bead=null) don't count toward capacity
 // since they're available for re-sling under the persistent polecat model.
 func countWorkingPolecats() int {
 	townRoot, err := workspace.FindFromCwd()
 	if err != nil {
 		return countActivePolecats() // Fallback to total count
+	}
+
+	if count, ok := countDurablyHookedPolecats(townRoot); ok {
+		return count
 	}
 
 	listCmd := tmux.BuildCommand("list-sessions", "-F", "#{session_name}")
@@ -539,4 +542,65 @@ func countWorkingPolecats() int {
 		count++
 	}
 	return count
+}
+
+func countDurablyHookedPolecats(townRoot string) (int, bool) {
+	bd := beads.New(townRoot)
+	agents, err := bd.ListAgentBeads()
+	if err != nil {
+		return 0, false
+	}
+
+	type candidate struct {
+		agent string
+		hook  string
+	}
+	candidates := make([]candidate, 0, len(agents))
+	hookIDs := make([]string, 0, len(agents))
+	for id, issue := range agents {
+		fields := beads.ParseAgentFields(issue.Description)
+		if fields == nil || fields.RoleType != "polecat" || fields.Rig == "" || fields.HookBead == "" {
+			continue
+		}
+		switch fields.AgentState {
+		case "", "spawning", "working", "stuck", "escalated", "running":
+		default:
+			continue
+		}
+		name := polecatNameFromAgentBeadID(id, fields.Rig)
+		if name == "" {
+			continue
+		}
+		candidates = append(candidates, candidate{agent: fmt.Sprintf("%s/polecats/%s", fields.Rig, name), hook: fields.HookBead})
+		hookIDs = append(hookIDs, fields.HookBead)
+	}
+	if len(candidates) == 0 {
+		return 0, true
+	}
+
+	hooks, err := bd.ShowMultiple(hookIDs)
+	if err != nil {
+		return 0, false
+	}
+	count := 0
+	for _, c := range candidates {
+		hook := hooks[c.hook]
+		if hook == nil || hook.Assignee != c.agent {
+			continue
+		}
+		switch hook.Status {
+		case "hooked", "in_progress", "pinned":
+			count++
+		}
+	}
+	return count, true
+}
+
+func polecatNameFromAgentBeadID(id, rigName string) string {
+	marker := "-" + rigName + "-polecat-"
+	idx := strings.Index(id, marker)
+	if idx < 0 {
+		return ""
+	}
+	return id[idx+len(marker):]
 }

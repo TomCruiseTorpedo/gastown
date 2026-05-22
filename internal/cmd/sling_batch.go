@@ -229,6 +229,11 @@ func runBatchSling(beadIDs []string, rigName string, townBeadsDir string) error 
 // preventing orphaned polecats from accumulating. Cleans up worktree, agent bead, git branch,
 // and optionally the associated auto-convoy.
 func cleanupSpawnedPolecat(spawnInfo *SpawnedPolecatInfo, rigName, convoyID string) {
+	if spawnInfo == nil {
+		return
+	}
+	defer spawnInfo.ReleaseAdmissionReservation()
+
 	townRoot, err := workspace.FindFromCwdOrError()
 	if err != nil {
 		return

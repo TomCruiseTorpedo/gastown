@@ -182,7 +182,7 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			return capacity.ErrCrossRigPrefix
 		},
 		Execute: func(b capacity.PendingBead) error {
-			result, err := dispatchSingleBead(b, townRoot, actor)
+			result, err := dispatchSingleBead(b, townRoot, actor, maxPolecats)
 			if err != nil {
 				return err
 			}
@@ -203,6 +203,11 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			return beadsForContext(townRoot, b.Context).CloseSlingContext(b.ID, "dispatched")
 		},
 		OnFailure: func(b capacity.PendingBead, err error) {
+			if isAdmissionDenial(err) {
+				fmt.Fprintf(os.Stderr, "%s Dispatch of %s denied by capacity reservation; context remains queued\n",
+					style.Dim.Render("○"), b.WorkBeadID)
+				return
+			}
 			var onSuccessErr *capacity.ErrOnSuccessFailed
 			if errors.As(err, &onSuccessErr) {
 				// Polecat launched but context close failed — not a true dispatch failure.
@@ -524,7 +529,7 @@ func getReadySlingContexts(townRoot string) ([]capacity.PendingBead, error) {
 // dispatchSingleBead dispatches one scheduled bead via executeSling.
 // Context fields are already parsed (from PendingBead.Context).
 // Returns the SlingResult (including PolecatName) on success.
-func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResult, error) {
+func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string, admissionMax int) (*SlingResult, error) {
 	if b.Context == nil {
 		return nil, fmt.Errorf("missing sling context for %s", b.ID)
 	}
@@ -545,6 +550,7 @@ func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string) (*SlingResul
 		Agent:            dp.Agent,
 		HookRawBead:      dp.HookRawBead,
 		Mode:             dp.Mode,
+		AdmissionMax:     admissionMax,
 		FormulaFailFatal: true,
 		CallerContext:    "scheduler-dispatch",
 		NoConvoy:         true,
