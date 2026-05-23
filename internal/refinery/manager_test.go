@@ -108,17 +108,23 @@ func TestManager_Queue_FiltersClosedMergeRequests(t *testing.T) {
 	if err := b.Init("gt"); err != nil {
 		t.Skipf("bd init unavailable in test environment: %v", err)
 	}
+	srcIssue, err := b.Create(beads.CreateOptions{Title: "Source issue"})
+	if err != nil {
+		t.Fatalf("create source issue: %v", err)
+	}
 
 	openIssue, err := b.Create(beads.CreateOptions{
-		Title:  "Open MR",
-		Labels: []string{"gt:merge-request"},
+		Title:       "Open MR",
+		Labels:      []string{"gt:merge-request"},
+		Description: "branch: polecat/test/gt-open\ntarget: main\nsource_issue: " + srcIssue.ID,
 	})
 	if err != nil {
 		t.Fatalf("create open merge-request issue: %v", err)
 	}
 	closedIssue, err := b.Create(beads.CreateOptions{
-		Title:  "Closed MR",
-		Labels: []string{"gt:merge-request"},
+		Title:       "Closed MR",
+		Labels:      []string{"gt:merge-request"},
+		Description: "branch: polecat/test/gt-closed\ntarget: main\nsource_issue: " + srcIssue.ID,
 	})
 	if err != nil {
 		t.Fatalf("create closed merge-request issue: %v", err)
