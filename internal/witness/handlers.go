@@ -2406,8 +2406,9 @@ func getBeadStatus(bd *BdCli, workDir, beadID string) (string, bool) {
 //  1. Records the respawn in the witness spawn-count ledger
 //  2. Resets status to open
 //  3. Clears assignee
-//  4. Sends mail to deacon for re-dispatch (includes respawn count; SPAWN_STORM
-//     prefix and Urgent priority when count exceeds max bead respawns config)
+//  4. Notifies Deacon for re-dispatch. Routine recoveries use a rate-limited
+//     nudge because the reopened bead is the durable source of truth; spawn
+//     storms still use urgent durable mail.
 //
 // Returns true if the bead was recovered.
 func resetAbandonedBead(bd *BdCli, workDir, rigName, hookBead, polecatName string, router *mail.Router) bool {
@@ -2480,46 +2481,7 @@ then either close the bead or reset the respawn counter.`,
 		return false
 	}
 
-	// Send mail to deacon for re-dispatch
-	if router != nil {
-		subject := fmt.Sprintf("RECOVERED_BEAD %s", hookBead)
-		priority := mail.PriorityHigh
-		stormNote := ""
-		if respawnCount >= maxRespawns {
-			subject = fmt.Sprintf("SPAWN_STORM RECOVERED_BEAD %s (respawned %dx)", hookBead, respawnCount)
-			priority = mail.PriorityUrgent
-			stormNote = fmt.Sprintf("\n\n⚠️ SPAWN STORM: bead has been reset %d times. "+
-				"Next respawn will be BLOCKED. "+
-				"Check polecat completion protocol or close the bead manually.",
-				respawnCount)
-		}
-		msg := &mail.Message{
-			From:     fmt.Sprintf("%s/witness", rigName),
-			To:       "deacon/",
-			Subject:  subject,
-			Priority: priority,
-			Body: fmt.Sprintf(`Recovered abandoned bead from dead polecat.
-
-Bead: %s
-Polecat: %s/%s
-Previous Status: %s
-Respawn Count: %d%s
-
-The bead has been reset to open with no assignee.
-Please re-dispatch to an available polecat.`,
-				hookBead, rigName, polecatName, status, respawnCount, stormNote),
-		}
-		if err := router.Send(msg); err != nil {
-			fmt.Fprintf(os.Stderr, "witness: failed to send RECOVERED_BEAD mail for %s: %v, attempting nudge fallback\n", hookBead, err)
-			// Nudge deacon as fallback — nudges are more reliable than mail
-			t := tmux.NewTmux()
-			nudgeMsg := fmt.Sprintf("RECOVERED_BEAD %s from %s/%s (status=%s, respawns=%d) — mail send failed, please re-dispatch",
-				hookBead, rigName, polecatName, status, respawnCount)
-			if nudgeErr := t.NudgeSession(session.DeaconSessionName(), nudgeMsg); nudgeErr != nil {
-				fmt.Fprintf(os.Stderr, "witness: nudge fallback to deacon also failed for %s: %v\n", hookBead, nudgeErr)
-			}
-		}
-	}
+	notifyDeaconRecoveredBead(workDir, rigName, hookBead, polecatName, status, respawnCount, maxRespawns, router)
 
 	return true
 }
