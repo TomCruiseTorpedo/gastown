@@ -44,6 +44,21 @@ func shouldDeferDispatch() (bool, error) {
 	return false, nil // -1 or 0 = direct dispatch
 }
 
+func configuredAdmissionMax(townRoot string) int {
+	if townRoot == "" {
+		return 0
+	}
+	settings, err := config.LoadOrCreateTownSettings(config.TownSettingsPath(townRoot))
+	if err != nil || settings.Scheduler == nil {
+		return 0
+	}
+	maxPolecats := settings.Scheduler.GetMaxPolecats()
+	if maxPolecats <= 0 {
+		return 0
+	}
+	return maxPolecats
+}
+
 // ScheduleOptions holds options for scheduling a bead.
 type ScheduleOptions struct {
 	Formula      string   // Formula to apply at dispatch time (e.g., "mol-polecat-work")

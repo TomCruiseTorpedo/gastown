@@ -94,6 +94,9 @@ func executeSling(params SlingParams) (*SlingResult, error) {
 			return nil, err
 		}
 	}
+	if params.AdmissionMax <= 0 {
+		params.AdmissionMax = configuredAdmissionMax(townRoot)
+	}
 
 	// Acquire per-bead flock to prevent concurrent dispatch races (TOCTOU).
 	// The CLI path (runSling) has its own flock; this closes the gap where

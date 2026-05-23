@@ -127,6 +127,7 @@ type ResolveTargetOptions struct {
 	WorkDesc     string // Description for dog dispatch (defaults to HookBead if empty)
 	BaseBranch   string // Override base branch for polecat worktree
 	ResumeBranch string // Existing branch to resume (e.g. PR head); mutually exclusive with BaseBranch
+	AdmissionMax int    // Capacity limit to reserve against; <=0 uses the direct-dispatch safety cap
 }
 
 // ResolvedTarget holds the results of target resolution.
@@ -237,6 +238,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 			Agent:        opts.Agent,
 			BaseBranch:   opts.BaseBranch,
 			ResumeBranch: opts.ResumeBranch,
+			AdmissionMax: opts.AdmissionMax,
 		}
 		spawnInfo, err := spawnPolecatForSling(rigName, spawnOpts)
 		if err != nil {
@@ -280,6 +282,7 @@ func resolveTarget(target string, opts ResolveTargetOptions) (*ResolvedTarget, e
 					Agent:        opts.Agent,
 					BaseBranch:   opts.BaseBranch,
 					ResumeBranch: opts.ResumeBranch,
+					AdmissionMax: opts.AdmissionMax,
 				}
 				spawnInfo, spawnErr := spawnPolecatForSling(rigName, spawnOpts)
 				if spawnErr != nil {

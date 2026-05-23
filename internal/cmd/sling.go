@@ -717,6 +717,7 @@ func runSling(cmd *cobra.Command, args []string) (retErr error) {
 		TownRoot:     townRoot,
 		BaseBranch:   slingBaseBranch,
 		ResumeBranch: slingResumeBranch,
+		AdmissionMax: configuredAdmissionMax(townRoot),
 	})
 	if err != nil {
 		return err

@@ -203,9 +203,7 @@ func dispatchScheduledWork(townRoot, actor string, batchOverride int, dryRun boo
 			return beadsForContext(townRoot, b.Context).CloseSlingContext(b.ID, "dispatched")
 		},
 		OnFailure: func(b capacity.PendingBead, err error) {
-			if isAdmissionDenial(err) {
-				fmt.Fprintf(os.Stderr, "%s Dispatch of %s denied by capacity reservation; context remains queued\n",
-					style.Dim.Render("○"), b.WorkBeadID)
+			if handleAdmissionDeniedDispatch(b.WorkBeadID, err) {
 				return
 			}
 			var onSuccessErr *capacity.ErrOnSuccessFailed
@@ -571,6 +569,15 @@ func dispatchSingleBead(b capacity.PendingBead, townRoot, _ string, admissionMax
 // isDaemonDispatch returns true when dispatch is triggered by the daemon heartbeat.
 func isDaemonDispatch() bool {
 	return os.Getenv("GT_DAEMON") == "1"
+}
+
+func handleAdmissionDeniedDispatch(workBeadID string, err error) bool {
+	if !isAdmissionDenial(err) {
+		return false
+	}
+	fmt.Fprintf(os.Stderr, "%s Dispatch of %s denied by capacity reservation; context remains queued\n",
+		style.Dim.Render("○"), workBeadID)
+	return true
 }
 
 // recordDispatchFailure increments the dispatch failure counter on the sling context bead.
