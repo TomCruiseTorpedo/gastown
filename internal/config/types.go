@@ -300,6 +300,10 @@ type NudgeThresholds struct {
 	// StaleClaimThreshold is how long a .claimed file must be untouched
 	// before treated as orphan (default "5m").
 	StaleClaimThreshold string `json:"stale_claim_threshold,omitempty"`
+
+	// RoutineDuplicateCooldown suppresses duplicate routine nudges with the same
+	// actionability key during this window (default "2m"). Urgent nudges are never suppressed.
+	RoutineDuplicateCooldown string `json:"routine_duplicate_cooldown,omitempty"`
 }
 
 // DaemonThresholds configures daemon lifecycle and patrol thresholds.

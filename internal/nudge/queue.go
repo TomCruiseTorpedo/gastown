@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"os"
 	"path/filepath"
 	"sort"
@@ -70,12 +71,18 @@ type QueuedNudge struct {
 	DeliverAfter time.Time `json:"deliver_after,omitempty"`
 }
 
+type recentRoutineState map[string]time.Time
+
 // queueDir returns the nudge queue directory for a given session.
 // Path: <townRoot>/.runtime/nudge_queue/<session>/
 func queueDir(townRoot, session string) string {
 	// Sanitize session name for filesystem safety
 	safe := strings.ReplaceAll(session, "/", "_")
 	return filepath.Join(townRoot, constants.DirRuntime, "nudge_queue", safe)
+}
+
+func recentRoutinePath(townRoot, session string) string {
+	return filepath.Join(queueDir(townRoot, session), ".recent-routine")
 }
 
 // randomSuffix returns a short random hex string to disambiguate filenames
@@ -95,18 +102,16 @@ func Enqueue(townRoot, session string, nudge QueuedNudge) error {
 		return fmt.Errorf("creating nudge queue dir: %w", err)
 	}
 
+	nudge = normalizeQueuedNudge(nudge)
+	if shouldSuppressRoutineDuplicate(townRoot, session, nudge) {
+		return nil
+	}
+
 	// Check queue depth before writing to prevent runaway senders.
 	maxDepth := nudgeConfig(townRoot).MaxQueueDepthV()
 	pending, _ := Pending(townRoot, session)
 	if pending >= maxDepth {
 		return fmt.Errorf("nudge queue for %s is full (%d/%d pending)", session, pending, maxDepth)
-	}
-
-	if nudge.Timestamp.IsZero() {
-		nudge.Timestamp = time.Now()
-	}
-	if nudge.Priority == "" {
-		nudge.Priority = PriorityNormal
 	}
 
 	// Set expiry if not already specified by the caller.
@@ -135,6 +140,130 @@ func Enqueue(townRoot, session string, nudge QueuedNudge) error {
 	}
 
 	return nil
+}
+
+func normalizeQueuedNudge(n QueuedNudge) QueuedNudge {
+	if n.Timestamp.IsZero() {
+		n.Timestamp = time.Now()
+	}
+	if n.Priority == "" {
+		n.Priority = PriorityNormal
+	}
+	if n.Severity == "" {
+		n.Severity = severityForPriority(n.Priority)
+	}
+	if n.Kind == "" {
+		n.Kind = deriveNudgeKind(n.Message)
+	}
+	if n.ThreadID == "" && n.Kind != "" {
+		n.ThreadID = routineThreadID(n.Message)
+	}
+	return n
+}
+
+func severityForPriority(priority string) string {
+	switch priority {
+	case PriorityUrgent:
+		return "high"
+	default:
+		return "routine"
+	}
+}
+
+func deriveNudgeKind(message string) string {
+	normalized := strings.ToUpper(strings.TrimSpace(message))
+	known := []string{
+		"SLOT_OPEN", "SLOT_BLOCKED", "MERGE_READY", "MERGE_FAILED", "MERGED",
+		"MR_REJECTED", "CONVOY_NEEDS_FEEDING", "RECOVERY_NEEDED", "SPAWN_BLOCKED",
+		"RECOVERED_BEAD", "HEALTH_CHECK", "POLECAT_DONE",
+	}
+	for _, kind := range known {
+		if strings.HasPrefix(normalized, kind+":") || strings.HasPrefix(normalized, kind+" ") || normalized == kind {
+			return strings.ToLower(kind)
+		}
+	}
+	if strings.Contains(normalized, "MERGE QUEUE") || strings.Contains(normalized, "NEW MR AVAILABLE") {
+		return "merge-queue"
+	}
+	if strings.Contains(normalized, "<SYSTEM-REMINDER>") {
+		return "system-reminder"
+	}
+	return ""
+}
+
+func routineThreadID(message string) string {
+	compact := strings.Join(strings.Fields(message), " ")
+	if len(compact) <= 160 {
+		return compact
+	}
+	h := fnv.New64a()
+	_, _ = h.Write([]byte(compact))
+	return fmt.Sprintf("%s#%x", compact[:120], h.Sum64())
+}
+
+func actionabilityKey(n QueuedNudge) string {
+	n = normalizeQueuedNudge(n)
+	if n.Kind == "" || n.ThreadID == "" {
+		return ""
+	}
+	return strings.ToLower(n.Kind) + "\x00" + n.ThreadID
+}
+
+func isRoutineNudge(n QueuedNudge) bool {
+	n = normalizeQueuedNudge(n)
+	if n.Priority == PriorityUrgent {
+		return false
+	}
+	severity := strings.ToLower(n.Severity)
+	return severity == "" || severity == "routine" || severity == "normal" || severity == "low" || severity == "medium"
+}
+
+func shouldSuppressRoutineDuplicate(townRoot, session string, n QueuedNudge) bool {
+	if !isRoutineNudge(n) {
+		return false
+	}
+	key := actionabilityKey(n)
+	if key == "" {
+		return false
+	}
+	cooldown := nudgeConfig(townRoot).RoutineDuplicateCooldownD()
+	if cooldown <= 0 {
+		return false
+	}
+
+	now := n.Timestamp
+	state := loadRecentRoutine(townRoot, session)
+	for k, last := range state {
+		if now.Sub(last) > cooldown {
+			delete(state, k)
+		}
+	}
+	if last, ok := state[key]; ok && now.Sub(last) <= cooldown {
+		return true
+	}
+	state[key] = now
+	storeRecentRoutine(townRoot, session, state)
+	return false
+}
+
+func loadRecentRoutine(townRoot, session string) recentRoutineState {
+	data, err := os.ReadFile(recentRoutinePath(townRoot, session))
+	if err != nil {
+		return recentRoutineState{}
+	}
+	var state recentRoutineState
+	if err := json.Unmarshal(data, &state); err != nil || state == nil {
+		return recentRoutineState{}
+	}
+	return state
+}
+
+func storeRecentRoutine(townRoot, session string, state recentRoutineState) {
+	data, err := json.Marshal(state)
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(recentRoutinePath(townRoot, session), data, 0644)
 }
 
 // Requeue writes previously drained nudges back to the queue for later delivery.
@@ -371,6 +500,7 @@ func FormatForInjection(nudges []QueuedNudge) string {
 	if len(nudges) == 0 {
 		return ""
 	}
+	nudges, counts := collapseForInjection(nudges)
 
 	var b strings.Builder
 	b.WriteString("<system-reminder>\n")
@@ -388,23 +518,57 @@ func FormatForInjection(nudges []QueuedNudge) string {
 	if len(urgent) > 0 {
 		b.WriteString(fmt.Sprintf("QUEUED NUDGE (%d urgent):\n\n", len(urgent)))
 		for _, n := range urgent {
-			b.WriteString(fmt.Sprintf("  [URGENT from %s] %s\n", n.Sender, n.Message))
+			b.WriteString(fmt.Sprintf("  [URGENT from %s] %s%s\n", n.Sender, n.Message, repeatSuffix(n, counts)))
 		}
 		if len(normal) > 0 {
 			b.WriteString(fmt.Sprintf("\nPlus %d non-urgent nudge(s):\n", len(normal)))
 			for _, n := range normal {
-				b.WriteString(fmt.Sprintf("  [from %s] %s\n", n.Sender, n.Message))
+				b.WriteString(fmt.Sprintf("  [from %s] %s%s\n", n.Sender, n.Message, repeatSuffix(n, counts)))
 			}
 		}
 		b.WriteString("\nHandle urgent nudges before continuing current work.\n")
 	} else {
 		b.WriteString(fmt.Sprintf("QUEUED NUDGE (%d message(s)):\n\n", len(normal)))
 		for _, n := range normal {
-			b.WriteString(fmt.Sprintf("  [from %s] %s\n", n.Sender, n.Message))
+			b.WriteString(fmt.Sprintf("  [from %s] %s%s\n", n.Sender, n.Message, repeatSuffix(n, counts)))
 		}
 		b.WriteString("\nThis is a background notification. Continue current work unless the nudge is higher priority.\n")
 	}
 
 	b.WriteString("</system-reminder>\n")
 	return b.String()
+}
+
+func collapseForInjection(nudges []QueuedNudge) ([]QueuedNudge, map[string]int) {
+	result := make([]QueuedNudge, 0, len(nudges))
+	counts := make(map[string]int)
+	seen := make(map[string]int)
+	for _, n := range nudges {
+		n = normalizeQueuedNudge(n)
+		key := ""
+		if isRoutineNudge(n) {
+			key = actionabilityKey(n)
+		}
+		if key == "" {
+			result = append(result, n)
+			continue
+		}
+		if idx, ok := seen[key]; ok {
+			counts[key]++
+			result[idx] = n
+			continue
+		}
+		seen[key] = len(result)
+		counts[key] = 1
+		result = append(result, n)
+	}
+	return result, counts
+}
+
+func repeatSuffix(n QueuedNudge, counts map[string]int) string {
+	key := actionabilityKey(n)
+	if key == "" || counts[key] <= 1 {
+		return ""
+	}
+	return fmt.Sprintf(" (collapsed %d duplicate routine reminders)", counts[key]-1)
 }

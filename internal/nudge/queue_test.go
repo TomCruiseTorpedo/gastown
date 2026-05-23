@@ -165,10 +165,121 @@ func TestFormatForInjection_Urgent(t *testing.T) {
 	}
 }
 
+func TestFormatForInjection_CollapsesRoutineDuplicates(t *testing.T) {
+	nudges := []QueuedNudge{
+		{Sender: "witness", Message: "<system-reminder>check hook</system-reminder>", Priority: PriorityNormal, Kind: "system-reminder", ThreadID: "hook-check"},
+		{Sender: "witness", Message: "<system-reminder>check hook</system-reminder>", Priority: PriorityNormal, Kind: "system-reminder", ThreadID: "hook-check"},
+	}
+
+	output := FormatForInjection(nudges)
+	if got := strings.Count(output, "check hook"); got != 1 {
+		t.Fatalf("formatted duplicate count = %d, want 1; output=%q", got, output)
+	}
+	if !strings.Contains(output, "collapsed 1 duplicate routine reminders") {
+		t.Fatalf("missing collapsed duplicate suffix: %q", output)
+	}
+}
+
+func TestFormatForInjection_DoesNotCollapseUrgentDuplicates(t *testing.T) {
+	nudges := []QueuedNudge{
+		{Sender: "daemon", Message: "DOLT_OUTAGE: database unreachable", Priority: PriorityUrgent, Kind: "dolt-outage", ThreadID: "town"},
+		{Sender: "daemon", Message: "DOLT_OUTAGE: database unreachable", Priority: PriorityUrgent, Kind: "dolt-outage", ThreadID: "town"},
+	}
+
+	output := FormatForInjection(nudges)
+	if got := strings.Count(output, "DOLT_OUTAGE"); got != 2 {
+		t.Fatalf("urgent duplicate count = %d, want 2; output=%q", got, output)
+	}
+}
+
 func TestFormatForInjection_Empty(t *testing.T) {
 	output := FormatForInjection(nil)
 	if output != "" {
 		t.Errorf("FormatForInjection(nil) = %q, want empty", output)
+	}
+}
+
+func TestEnqueueSuppressesRoutineDuplicateSlotOpen(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-test-routine-slot-open"
+	msg := "SLOT_OPEN: gastown/ghoul completed (exit=COMPLETED) - slot available"
+
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "witness", Message: msg}); err != nil {
+		t.Fatalf("first Enqueue: %v", err)
+	}
+	if err := Enqueue(townRoot, session, QueuedNudge{Sender: "witness", Message: msg}); err != nil {
+		t.Fatalf("second Enqueue: %v", err)
+	}
+
+	nudges, err := Drain(townRoot, session)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 1 {
+		t.Fatalf("got %d nudges, want 1 duplicate-suppressed SLOT_OPEN", len(nudges))
+	}
+}
+
+func TestEnqueueSuppressesRoutineDuplicateMergeQueueReminder(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-test-routine-mq"
+	msg := "New MR available - check merge queue for pending work"
+
+	for i := 0; i < 3; i++ {
+		if err := Enqueue(townRoot, session, QueuedNudge{Sender: "witness", Message: msg}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	nudges, err := Drain(townRoot, session)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 1 {
+		t.Fatalf("got %d nudges, want 1 duplicate-suppressed MQ reminder", len(nudges))
+	}
+}
+
+func TestEnqueueKeepsDistinctRoutineThreads(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-test-routine-distinct"
+
+	items := []QueuedNudge{
+		{Sender: "witness", Message: "slot ghoul", Kind: "slot-open", ThreadID: "gastown/ghoul"},
+		{Sender: "witness", Message: "slot nux", Kind: "slot-open", ThreadID: "gastown/nux"},
+	}
+	for i, n := range items {
+		if err := Enqueue(townRoot, session, n); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	nudges, err := Drain(townRoot, session)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 2 {
+		t.Fatalf("got %d nudges, want 2 distinct routine threads", len(nudges))
+	}
+}
+
+func TestEnqueueDoesNotSuppressUrgentDoltDuplicate(t *testing.T) {
+	townRoot := t.TempDir()
+	session := "gt-test-urgent-dolt"
+	msg := "DOLT_OUTAGE: database unreachable"
+
+	for i := 0; i < 2; i++ {
+		if err := Enqueue(townRoot, session, QueuedNudge{Sender: "daemon", Message: msg, Priority: PriorityUrgent, Kind: "dolt-outage", ThreadID: "town"}); err != nil {
+			t.Fatalf("Enqueue %d: %v", i, err)
+		}
+	}
+
+	nudges, err := Drain(townRoot, session)
+	if err != nil {
+		t.Fatalf("Drain: %v", err)
+	}
+	if len(nudges) != 2 {
+		t.Fatalf("got %d nudges, want 2 urgent Dolt alerts", len(nudges))
 	}
 }
 

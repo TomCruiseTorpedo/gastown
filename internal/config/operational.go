@@ -24,31 +24,32 @@ const (
 
 // Nudge defaults.
 const (
-	DefaultNudgeReadyTimeout      = 10 * time.Second
-	DefaultNudgeRetryInterval     = 500 * time.Millisecond
-	DefaultNudgeLockTimeout       = 30 * time.Second
-	DefaultNudgeNormalTTL         = 30 * time.Minute
-	DefaultNudgeUrgentTTL         = 2 * time.Hour
-	DefaultNudgeMaxQueueDepth     = 50
-	DefaultNudgeStaleClaimTimeout = 5 * time.Minute
+	DefaultNudgeReadyTimeout             = 10 * time.Second
+	DefaultNudgeRetryInterval            = 500 * time.Millisecond
+	DefaultNudgeLockTimeout              = 30 * time.Second
+	DefaultNudgeNormalTTL                = 30 * time.Minute
+	DefaultNudgeUrgentTTL                = 2 * time.Hour
+	DefaultNudgeMaxQueueDepth            = 50
+	DefaultNudgeStaleClaimTimeout        = 5 * time.Minute
+	DefaultNudgeRoutineDuplicateCooldown = 2 * time.Minute
 )
 
 // Daemon defaults.
 const (
-	DefaultMassDeathWindow                 = 30 * time.Second
-	DefaultMassDeathThreshold              = 3
-	DefaultDogIdleSessionTimeout           = 1 * time.Hour
-	DefaultPolecatIdleSessionTimeout       = 15 * time.Minute
-	DefaultDogIdleRemoveTimeout            = 4 * time.Hour
-	DefaultStaleWorkingTimeout             = 2 * time.Hour
-	DefaultMaxDogPoolSize                  = 4
-	DefaultMaxLifecycleMessageAge          = 6 * time.Hour
-	DefaultSyncFailureEscalationThreshold  = 3
-	DefaultDoctorMolCooldown               = 5 * time.Minute
-	DefaultRecoveryHeartbeatInterval       = 3 * time.Minute
-	DefaultBootSpawnCooldown               = 2 * time.Minute
-	DefaultBootIdleSuppression             = 15 * time.Minute
-	DefaultDeaconGracePeriod               = 5 * time.Minute
+	DefaultMassDeathWindow                = 30 * time.Second
+	DefaultMassDeathThreshold             = 3
+	DefaultDogIdleSessionTimeout          = 1 * time.Hour
+	DefaultPolecatIdleSessionTimeout      = 15 * time.Minute
+	DefaultDogIdleRemoveTimeout           = 4 * time.Hour
+	DefaultStaleWorkingTimeout            = 2 * time.Hour
+	DefaultMaxDogPoolSize                 = 4
+	DefaultMaxLifecycleMessageAge         = 6 * time.Hour
+	DefaultSyncFailureEscalationThreshold = 3
+	DefaultDoctorMolCooldown              = 5 * time.Minute
+	DefaultRecoveryHeartbeatInterval      = 3 * time.Minute
+	DefaultBootSpawnCooldown              = 2 * time.Minute
+	DefaultBootIdleSuppression            = 15 * time.Minute
+	DefaultDeaconGracePeriod              = 5 * time.Minute
 
 	// Pressure check defaults — fully opt-in. All zero = disabled.
 	// Configure in settings/config.json under operational.daemon to enable.
@@ -60,21 +61,21 @@ const (
 
 // Deacon defaults.
 const (
-	DefaultDeaconPingTimeout               = 30 * time.Second
-	DefaultDeaconConsecutiveFailures       = 3
-	DefaultDeaconCooldown                  = 5 * time.Minute
-	DefaultDeaconHeartbeatStaleThreshold   = 5 * time.Minute
-	DefaultDeaconHeartbeatVeryStale        = 20 * time.Minute
-	DefaultMaxRedispatches                 = 3
-	DefaultRedispatchCooldown              = 5 * time.Minute
-	DefaultMaxFeedsPerCycle                = 3
-	DefaultFeedCooldown                    = 10 * time.Minute
+	DefaultDeaconPingTimeout             = 30 * time.Second
+	DefaultDeaconConsecutiveFailures     = 3
+	DefaultDeaconCooldown                = 5 * time.Minute
+	DefaultDeaconHeartbeatStaleThreshold = 5 * time.Minute
+	DefaultDeaconHeartbeatVeryStale      = 20 * time.Minute
+	DefaultMaxRedispatches               = 3
+	DefaultRedispatchCooldown            = 5 * time.Minute
+	DefaultMaxFeedsPerCycle              = 3
+	DefaultFeedCooldown                  = 10 * time.Minute
 )
 
 // Polecat defaults.
 const (
-	DefaultPolecatHeartbeatStale = 3 * time.Minute
-	DefaultPolecatDoltMaxRetries = 10
+	DefaultPolecatHeartbeatStale  = 3 * time.Minute
+	DefaultPolecatDoltMaxRetries  = 10
 	DefaultPolecatDoltBaseBackoff = 500 * time.Millisecond
 	DefaultPolecatDoltBackoffMax  = 30 * time.Second
 	DefaultPolecatPendingMaxAge   = 5 * time.Minute
@@ -110,9 +111,9 @@ const (
 	DefaultWitnessStartupStallThreshold  = 90 * time.Second
 	DefaultWitnessStartupActivityGrace   = 60 * time.Second
 	DefaultWitnessMaxBeadRespawns        = 3
-	DefaultWitnessDoneIntentStuckTimeout    = 60 * time.Second
-	DefaultWitnessDoneIntentRecentGrace     = 30 * time.Second
-	DefaultWitnessHeartbeatStartupGrace     = 5 * time.Minute
+	DefaultWitnessDoneIntentStuckTimeout = 60 * time.Second
+	DefaultWitnessDoneIntentRecentGrace  = 30 * time.Second
+	DefaultWitnessHeartbeatStartupGrace  = 5 * time.Minute
 )
 
 // LoadOperationalConfig loads operational config from a town root.
@@ -275,6 +276,14 @@ func (n *NudgeThresholds) StaleClaimThresholdD() time.Duration {
 		return ParseDurationOrDefault(n.StaleClaimThreshold, DefaultNudgeStaleClaimTimeout)
 	}
 	return DefaultNudgeStaleClaimTimeout
+}
+
+// RoutineDuplicateCooldownD returns the configured or default routine duplicate cooldown.
+func (n *NudgeThresholds) RoutineDuplicateCooldownD() time.Duration {
+	if n != nil {
+		return ParseDurationOrDefault(n.RoutineDuplicateCooldown, DefaultNudgeRoutineDuplicateCooldown)
+	}
+	return DefaultNudgeRoutineDuplicateCooldown
 }
 
 // --- Daemon accessors ---

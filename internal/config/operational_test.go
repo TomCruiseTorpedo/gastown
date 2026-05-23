@@ -87,6 +87,9 @@ func TestNudgeThresholds_Defaults(t *testing.T) {
 	if got := nudge.StaleClaimThresholdD(); got != DefaultNudgeStaleClaimTimeout {
 		t.Errorf("StaleClaimThreshold: got %v, want %v", got, DefaultNudgeStaleClaimTimeout)
 	}
+	if got := nudge.RoutineDuplicateCooldownD(); got != DefaultNudgeRoutineDuplicateCooldown {
+		t.Errorf("RoutineDuplicateCooldown: got %v, want %v", got, DefaultNudgeRoutineDuplicateCooldown)
+	}
 }
 
 func TestDaemonThresholds_Defaults(t *testing.T) {
