@@ -495,6 +495,21 @@ func TestClassifyDoltListener(t *testing.T) {
 	}
 }
 
+func TestParseSSDoltListenerHelpers(t *testing.T) {
+	if got := parsePortFromSSLocalAddress("127.0.0.1:43103"); got != 43103 {
+		t.Fatalf("parsePortFromSSLocalAddress IPv4 = %d, want 43103", got)
+	}
+	if got := parsePortFromSSLocalAddress("[::1]:43103"); got != 43103 {
+		t.Fatalf("parsePortFromSSLocalAddress IPv6 = %d, want 43103", got)
+	}
+
+	line := `LISTEN 0 128 127.0.0.1:43103 0.0.0.0:* users:(("dolt",pid=12345,fd=12),("dolt",pid=67890,fd=13))`
+	pids := parsePIDsFromSSUsers(line)
+	if len(pids) != 2 || pids[0] != 12345 || pids[1] != 67890 {
+		t.Fatalf("parsePIDsFromSSUsers = %v, want [12345 67890]", pids)
+	}
+}
+
 func TestGetHealthMetrics_NoServer(t *testing.T) {
 	townRoot := t.TempDir()
 

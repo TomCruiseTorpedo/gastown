@@ -1095,7 +1095,7 @@ func FindAllDoltListeners() []DoltListener {
 	setProcessGroup(cmd)
 	output, err := cmd.Output()
 	if err != nil {
-		return nil
+		return findAllDoltListenersWithSS()
 	}
 
 	// Parse lsof -F output. Lines are field-prefixed:
@@ -1138,6 +1138,83 @@ func FindAllDoltListeners() []DoltListener {
 		}
 	}
 	return listeners
+}
+
+func findAllDoltListenersWithSS() []DoltListener {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ss", "-tlnp")
+	setProcessGroup(cmd)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	var listeners []DoltListener
+	for _, line := range strings.Split(string(output), "\n") {
+		if !strings.Contains(line, "\"dolt\"") || !strings.Contains(line, "pid=") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 4 {
+			continue
+		}
+		port := parsePortFromSSLocalAddress(fields[3])
+		if port <= 0 {
+			continue
+		}
+		for _, pid := range parsePIDsFromSSUsers(line) {
+			if !hasDoltListener(listeners, pid, port) {
+				listeners = append(listeners, DoltListener{PID: pid, Port: port})
+			}
+		}
+	}
+	return listeners
+}
+
+func parsePortFromSSLocalAddress(addr string) int {
+	idx := strings.LastIndex(addr, ":")
+	if idx < 0 || idx == len(addr)-1 {
+		return 0
+	}
+	port, err := strconv.Atoi(strings.Trim(addr[idx+1:], "[]"))
+	if err != nil {
+		return 0
+	}
+	return port
+}
+
+func parsePIDsFromSSUsers(line string) []int {
+	var pids []int
+	for search := line; ; {
+		idx := strings.Index(search, "pid=")
+		if idx < 0 {
+			return pids
+		}
+		rest := search[idx+4:]
+		end := strings.IndexAny(rest, ",)")
+		if end < 0 {
+			end = len(rest)
+		}
+		pid, err := strconv.Atoi(rest[:end])
+		if err == nil && pid > 0 {
+			pids = append(pids, pid)
+		}
+		if end >= len(rest) {
+			return pids
+		}
+		search = rest[end:]
+	}
+}
+
+func hasDoltListener(listeners []DoltListener, pid, port int) bool {
+	for _, l := range listeners {
+		if l.PID == pid && l.Port == port {
+			return true
+		}
+	}
+	return false
 }
 
 // ClassifyDoltListeners returns every local Dolt TCP listener with enough
