@@ -232,8 +232,14 @@ func applyFormulaVars(text string, varMap map[string]string) string {
 // Returns "" if the key is not found.
 func extractFormulaVar(formulaVars, key string) string {
 	for _, line := range strings.Split(formulaVars, "\n") {
-		if k, v, ok := strings.Cut(strings.TrimSpace(line), "="); ok && k == key {
+		line = strings.TrimSpace(line)
+		if k, v, ok := strings.Cut(line, "="); ok && k == key {
 			return v
+		}
+		for _, token := range strings.Fields(line) {
+			if k, v, ok := strings.Cut(token, "="); ok && k == key {
+				return v
+			}
 		}
 	}
 	return ""
