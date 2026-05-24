@@ -336,17 +336,15 @@ func TestReapOwnedTestServersRefusesNonTempRoot(t *testing.T) {
 }
 
 func TestReapOwnedTestServersIgnoresNonDoltPID(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("sleep subprocess fixture is POSIX-only")
-	}
 	townRoot := t.TempDir()
 	config := DefaultConfig(townRoot)
 	if err := os.MkdirAll(filepath.Dir(config.PidFile), 0755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("sleep", "30")
+	cmd := exec.Command(os.Args[0], "-test.run=^TestReapOwnedTestServersHelperProcess$")
+	cmd.Env = append(os.Environ(), "GT_DOLT_REAP_HELPER=1")
 	if err := cmd.Start(); err != nil {
-		t.Fatalf("start sleep: %v", err)
+		t.Fatalf("start helper process: %v", err)
 	}
 	t.Cleanup(func() {
 		if cmd.Process != nil {
@@ -368,6 +366,14 @@ func TestReapOwnedTestServersIgnoresNonDoltPID(t *testing.T) {
 	if !processIsAlive(cmd.Process.Pid) {
 		t.Fatalf("non-Dolt child process %d was killed", cmd.Process.Pid)
 	}
+}
+
+func TestReapOwnedTestServersHelperProcess(t *testing.T) {
+	if os.Getenv("GT_DOLT_REAP_HELPER") != "1" {
+		return
+	}
+	time.Sleep(30 * time.Second)
+	os.Exit(0)
 }
 
 func TestIsDoltSQLServerArgs(t *testing.T) {

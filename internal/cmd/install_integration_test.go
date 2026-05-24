@@ -14,6 +14,7 @@ import (
 
 	"github.com/steveyegge/gastown/internal/config"
 	"github.com/steveyegge/gastown/internal/testutil"
+	"gopkg.in/yaml.v3"
 )
 
 // TestInstallCreatesCorrectStructure validates that a fresh gt install
@@ -511,8 +512,20 @@ func assertDoltConfigPort(t *testing.T, hqPath, wantPort string) {
 	if err != nil {
 		t.Fatalf("reading Dolt config %s: %v", configPath, err)
 	}
-	if !strings.Contains(string(data), "port: "+wantPort) {
-		t.Fatalf("Dolt config does not use isolated port %s:\n%s", wantPort, data)
+	var cfg struct {
+		Listener struct {
+			Port int `yaml:"port"`
+		} `yaml:"listener"`
+	}
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("parsing Dolt config %s: %v", configPath, err)
+	}
+	want, err := strconv.Atoi(wantPort)
+	if err != nil {
+		t.Fatalf("invalid expected Dolt port %q: %v", wantPort, err)
+	}
+	if cfg.Listener.Port != want {
+		t.Fatalf("Dolt config port = %d, want isolated port %d\n%s", cfg.Listener.Port, want, data)
 	}
 }
 
