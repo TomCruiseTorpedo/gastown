@@ -2167,14 +2167,28 @@ func TestIsGasTownRuntimePath(t *testing.T) {
 		{".runtime", true},
 		{".beads/", true},
 		{".beads/db.json", true},
+		{".beads\\db.json", true},
+		{".beads/.runtime/state.json", true},
 		{".logs/agent.log", true},
 		{"__pycache__/", true},
 		{"__pycache__/foo.cpython-312.pyc", true},
 		{"src/__pycache__/bar.pyc", true},
+		{"services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js", true},
+		{"services\\cyrus\\workflow-cyrus-edge\\node_modules\\pkg\\index.js", true},
+		{"dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json", true},
+		{"services/workflows/collateral-internal/execution_log.db", true},
+		{"api/.pytest_cache/v/cache/nodeids", true},
+		{"api/.mypy_cache/3.12/module.meta.json", true},
+		{"api/.ruff_cache/0.8.0/cache", true},
+		{"coverage/lcov.info", true},
+		{"htmlcov/index.html", true},
+		{"src/module.pyc", true},
+		{"frontend/.DS_Store", true},
 		{"src/main.go", false},
 		{"README.md", false},
 		{".gitignore", false},
 		{"claude-stuff/foo", false},
+		{"src/coverage_report.go", false},
 	}
 
 	for _, tt := range tests {
@@ -2261,6 +2275,20 @@ func TestCleanExcludingRuntime(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "nested dependency and cache artifacts",
+			s: UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				UntrackedFiles: []string{
+					"services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js",
+					"dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json",
+					"services/workflows/collateral-internal/execution_log.db",
+					"api/.pytest_cache/v/cache/nodeids",
+					"src/__pycache__/module.cpython-312.pyc",
+				},
+			},
+			want: true,
+		},
+		{
 			// CLAUDE.local.md is a Gas Town overlay file (gt-p35) that must not
 			// block gt done or be auto-committed.
 			name: "CLAUDE.local.md is runtime artifact",
@@ -2279,6 +2307,41 @@ func TestCleanExcludingRuntime(t *testing.T) {
 				t.Errorf("CleanExcludingRuntime() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestRuntimeArtifactPaths(t *testing.T) {
+	status := UncommittedWorkStatus{
+		HasUncommittedChanges: true,
+		ModifiedFiles: []string{
+			"services/workflows/collateral-internal/execution_log.db",
+			"src/handler.go",
+		},
+		UntrackedFiles: []string{
+			"services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js",
+			"services/cyrus/workflow-cyrus-edge/node_modules/pkg/package.json",
+			"dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json",
+			"api/.pytest_cache/v/cache/nodeids",
+			"src/__pycache__/module.cpython-312.pyc",
+			"cmd/new_feature.go",
+		},
+	}
+
+	got := status.RuntimeArtifactPaths()
+	want := []string{
+		"services/workflows/collateral-internal/execution_log.db",
+		"services/cyrus/workflow-cyrus-edge/node_modules/",
+		"dashboard/public/meridian-dashboard/.vite/",
+		"api/.pytest_cache/",
+		"src/__pycache__/",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("RuntimeArtifactPaths() = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("RuntimeArtifactPaths()[%d] = %q, want %q (all: %#v)", i, got[i], want[i], got)
+		}
 	}
 }
 

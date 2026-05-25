@@ -1080,7 +1080,7 @@ type GitStatus struct {
 
 // Status returns the current git status.
 func (g *Git) Status() (*GitStatus, error) {
-	out, err := g.run("status", "--porcelain")
+	out, err := g.run("status", "--porcelain", "-uall")
 	if err != nil {
 		return nil, err
 	}
@@ -2544,39 +2544,60 @@ func isBeadsPath(path string) bool {
 	return strings.Contains(path, ".beads/") || strings.Contains(path, ".beads\\")
 }
 
-// isGasTownRuntimePath returns true if the path is a Gas Town or Cursor runtime
-// artifact that should not block gt done. These paths are managed by the toolchain,
-// not by the developer, and are normally gitignored via EnsureGitignorePatterns.
-func isGasTownRuntimePath(path string) bool {
-	prefixes := []string{
-		".beads/", ".beads\\",
-		".claude/", ".claude\\",
-		".runtime/", ".runtime\\",
-		".logs/", ".logs\\",
-		"__pycache__/", "__pycache__\\",
+// runtimeArtifactRoot returns the path that should be reset when a runtime artifact
+// is staged. Directory artifacts return the directory root so large trees like
+// nested node_modules are unstaged with one pathspec instead of thousands.
+func runtimeArtifactRoot(path string) (string, bool) {
+	path = strings.TrimPrefix(filepath.ToSlash(strings.ReplaceAll(path, "\\", "/")), "./")
+	bare := strings.TrimSuffix(path, "/")
+	if bare == "" {
+		return "", false
 	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(path, prefix) || strings.Contains(path, "/"+prefix) {
-			return true
+
+	parts := strings.Split(bare, "/")
+	for i, part := range parts {
+		switch part {
+		case ".beads", ".claude", ".runtime", ".logs", "__pycache__", "node_modules", ".vite", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".cache", "coverage", "htmlcov":
+			return strings.Join(parts[:i+1], "/") + "/", true
 		}
 	}
-	// Also match bare directory entries from git status (e.g. ".claude/")
-	bare := strings.TrimSuffix(strings.TrimSuffix(path, "/"), "\\")
-	for _, name := range []string{".beads", ".claude", ".runtime", ".logs", "__pycache__"} {
-		if bare == name {
-			return true
-		}
+
+	base := filepath.Base(bare)
+	lower := strings.ToLower(base)
+	if base == "CLAUDE.local.md" || base == ".DS_Store" || strings.HasSuffix(lower, ".db") || strings.HasSuffix(lower, ".pyc") || strings.HasSuffix(lower, ".pyo") {
+		return bare, true
 	}
-	// CLAUDE.local.md is a Gas Town overlay file written by CreatePolecatCLAUDEmd.
-	// It must not be staged by the auto-commit safety net or committed to the repo.
-	if bare == "CLAUDE.local.md" {
-		return true
-	}
-	return false
+
+	return "", false
 }
 
-// CleanExcludingRuntime returns true if the only uncommitted changes are Gas Town
-// runtime artifacts (.beads/, .claude/, .runtime/, .logs/, __pycache__/).
+// isGasTownRuntimePath returns true if the path is a runtime artifact that should
+// not block gt done. These paths are managed by tooling or test/build commands,
+// not by the developer, and must not be auto-saved into polecat MRs.
+func isGasTownRuntimePath(path string) bool {
+	_, ok := runtimeArtifactRoot(path)
+	return ok
+}
+
+// RuntimeArtifactPaths returns deduplicated pathspecs for runtime artifacts in the
+// current uncommitted work. Callers can pass the result to git reset after git add
+// to keep generated state out of safety-net commits.
+func (s *UncommittedWorkStatus) RuntimeArtifactPaths() []string {
+	seen := make(map[string]bool)
+	var paths []string
+	for _, f := range append(append([]string{}, s.ModifiedFiles...), s.UntrackedFiles...) {
+		root, ok := runtimeArtifactRoot(f)
+		if !ok || seen[root] {
+			continue
+		}
+		seen[root] = true
+		paths = append(paths, root)
+	}
+	return paths
+}
+
+// CleanExcludingRuntime returns true if the only uncommitted changes are
+// runtime artifacts covered by the centralized exclusion policy.
 // Used by gt done to avoid blocking completion on toolchain-managed files.
 //
 // Note: UnpushedCommits and StashCount are intentionally NOT checked here. This

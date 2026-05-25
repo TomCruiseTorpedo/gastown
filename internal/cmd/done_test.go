@@ -1441,6 +1441,74 @@ func TestAutoCommitSafetyNet(t *testing.T) {
 			t.Error("runtime-only changes should be considered clean excluding runtime")
 		}
 	})
+
+	t.Run("auto-commit excludes runtime artifacts recursively", func(t *testing.T) {
+		repo := t.TempDir()
+		testRunGit(t, repo, "init")
+		testRunGit(t, repo, "config", "user.email", "test@test.com")
+		testRunGit(t, repo, "config", "user.name", "Test")
+		if err := os.WriteFile(filepath.Join(repo, "README.md"), []byte("# Test\n"), 0644); err != nil {
+			t.Fatal(err)
+		}
+		testRunGit(t, repo, "add", "README.md")
+		testRunGit(t, repo, "commit", "-m", "initial commit")
+
+		writeFile := func(path, content string) {
+			t.Helper()
+			fullPath := filepath.Join(repo, path)
+			if err := os.MkdirAll(filepath.Dir(fullPath), 0755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(fullPath, []byte(content), 0644); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		writeFile("src/handler.go", "package main\n\nfunc handler() {}\n")
+		writeFile("services/cyrus/workflow-cyrus-edge/node_modules/pkg/index.js", "module.exports = {}\n")
+		writeFile("dashboard/public/meridian-dashboard/.vite/vitest/hash/results.json", "{}\n")
+		writeFile("services/workflows/collateral-internal/execution_log.db", "sqlite\n")
+		writeFile("api/.pytest_cache/v/cache/nodeids", "[]\n")
+		writeFile("src/__pycache__/handler.cpython-312.pyc", "pyc\n")
+		writeFile(".beads/.runtime/state.json", "{}\n")
+
+		g := gitpkg.NewGit(repo)
+		ws, err := g.CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if !ws.HasUncommittedChanges || ws.CleanExcludingRuntime() {
+			t.Fatal("expected mixed source and runtime changes")
+		}
+
+		if err := g.Add("-A"); err != nil {
+			t.Fatalf("git add: %v", err)
+		}
+		if runtimePaths := ws.RuntimeArtifactPaths(); len(runtimePaths) > 0 {
+			if err := g.ResetFiles(runtimePaths...); err != nil {
+				t.Fatalf("reset runtime artifacts: %v", err)
+			}
+		}
+		if err := g.Commit("fix: auto-save uncommitted implementation work (gt-pvx safety net)"); err != nil {
+			t.Fatalf("git commit: %v", err)
+		}
+
+		changed, err := g.DiffNameOnly("HEAD~1", "HEAD")
+		if err != nil {
+			t.Fatalf("DiffNameOnly: %v", err)
+		}
+		if len(changed) != 1 || changed[0] != "src/handler.go" {
+			t.Fatalf("auto-save committed %v, want only src/handler.go", changed)
+		}
+
+		wsAfter, err := g.CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork after commit: %v", err)
+		}
+		if !wsAfter.HasUncommittedChanges || !wsAfter.CleanExcludingRuntime() {
+			t.Fatalf("runtime artifacts should remain uncommitted and clean-excluded, got %#v", wsAfter)
+		}
+	})
 }
 
 // TestSyncGuardWithUncommittedChanges verifies that the worktree sync guard
