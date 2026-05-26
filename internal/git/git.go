@@ -121,6 +121,29 @@ func (g *Git) run(args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+func (g *Git) runRaw(args ...string) (string, error) {
+	if err := g.guardUnsafeTownRootMutation(args); err != nil {
+		return "", err
+	}
+	if g.gitDir != "" {
+		args = append([]string{"--git-dir=" + g.gitDir}, args...)
+	}
+
+	cmd := exec.Command("git", args...)
+	util.SetDetachedProcessGroup(cmd)
+	if g.workDir != "" {
+		cmd.Dir = g.workDir
+	}
+
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return "", g.wrapError(err, stdout.String(), stderr.String(), args)
+	}
+	return stdout.String(), nil
+}
+
 // pushTimeout is the maximum time a git push is allowed to run before being
 // killed. This prevents gt done from hanging indefinitely when the remote
 // (e.g. GitLab) is unreachable or slow.
@@ -1071,12 +1094,13 @@ func (g *Git) DiffNameOnly(base, head string) ([]string, error) {
 
 // GitStatus represents the status of the working directory.
 type GitStatus struct {
-	Clean     bool
-	Modified  []string
-	Added     []string
-	Deleted   []string
-	Untracked []string
-	Unmerged  []string
+	Clean       bool
+	Modified    []string
+	Added       []string
+	Deleted     []string
+	Untracked   []string
+	Unmerged    []string
+	SourcePaths []string
 }
 
 type porcelainStatusEntry struct {
@@ -1088,10 +1112,11 @@ type porcelainStatusEntry struct {
 
 // Status returns the current git status.
 func (g *Git) Status() (*GitStatus, error) {
-	out, err := g.run("status", "--porcelain", "-uall")
+	out, err := g.runRaw("status", "--porcelain", "-uall")
 	if err != nil {
 		return nil, err
 	}
+	out = strings.TrimRight(out, "\n")
 
 	status := &GitStatus{Clean: true}
 	if out == "" {
@@ -1115,11 +1140,15 @@ func (g *Git) Status() (*GitStatus, error) {
 
 		switch {
 		case entry.Unmerged:
-			status.Unmerged = append(status.Unmerged, entry.paths()...)
+			status.Modified = append(status.Modified, file)
+			status.Unmerged = append(status.Unmerged, file)
 		case strings.Contains(code, "?"):
 			status.Untracked = append(status.Untracked, file)
 		case strings.ContainsAny(code, "RC"):
-			status.Modified = append(status.Modified, entry.paths()...)
+			status.Modified = append(status.Modified, file)
+			if entry.SourcePath != "" && (strings.Contains(code, "R") || g.largeEnoughWorktreeFile(entry.SourcePath)) {
+				status.SourcePaths = append(status.SourcePaths, entry.SourcePath)
+			}
 		case strings.Contains(code, "M"):
 			status.Modified = append(status.Modified, file)
 		case strings.Contains(code, "A"):
@@ -2563,6 +2592,7 @@ type UncommittedWorkStatus struct {
 	ModifiedFiles  []string
 	UntrackedFiles []string
 	UnmergedFiles  []string
+	SourceFiles    []string
 }
 
 // Clean returns true if there is no uncommitted work.
@@ -2575,7 +2605,7 @@ func (s *UncommittedWorkStatus) Clean() bool {
 // across worktrees and shouldn't block cleanup.
 func (s *UncommittedWorkStatus) CleanExcludingBeads() bool {
 	// Stashes and unpushed commits always count as uncommitted work
-	if s.StashCount > 0 || s.UnpushedCommits > 0 || len(s.UnmergedFiles) > 0 {
+	if s.StashCount > 0 || s.UnpushedCommits > 0 || len(s.UnmergedFiles) > 0 || len(s.SourceFiles) > 0 {
 		return false
 	}
 
@@ -2657,11 +2687,26 @@ func (s *UncommittedWorkStatus) RuntimeArtifactPaths() []string {
 // artifact policy. Recovery checks use this to ignore generated tool state while
 // still blocking on real source changes.
 func (s *UncommittedWorkStatus) NonRuntimePaths() []string {
+	seen := make(map[string]bool)
 	var paths []string
-	paths = append(paths, s.UnmergedFiles...)
+	add := func(path string) {
+		if path == "" || seen[path] {
+			return
+		}
+		seen[path] = true
+		paths = append(paths, path)
+	}
+	for _, f := range s.UnmergedFiles {
+		add(f)
+	}
+	for _, f := range s.SourceFiles {
+		if !isGasTownRuntimePath(f) {
+			add(f)
+		}
+	}
 	for _, f := range append(append([]string{}, s.ModifiedFiles...), s.UntrackedFiles...) {
 		if !isGasTownRuntimePath(f) {
-			paths = append(paths, f)
+			add(f)
 		}
 	}
 	return paths
@@ -2677,7 +2722,7 @@ func (s *UncommittedWorkStatus) NonRuntimePaths() []string {
 // survive worktree deletion — both are handled separately and shouldn't block
 // completion on runtime-only dirt (gas-7vg).
 func (s *UncommittedWorkStatus) CleanExcludingRuntime() bool {
-	if len(s.UnmergedFiles) > 0 {
+	if len(s.UnmergedFiles) > 0 || len(s.SourceFiles) > 0 {
 		return false
 	}
 
@@ -2700,10 +2745,13 @@ func (s *UncommittedWorkStatus) CleanExcludingRuntime() bool {
 func (s *UncommittedWorkStatus) String() string {
 	var issues []string
 	if s.HasUncommittedChanges {
-		issues = append(issues, fmt.Sprintf("%d uncommitted change(s)", len(s.ModifiedFiles)+len(s.UntrackedFiles)+len(s.UnmergedFiles)))
+		issues = append(issues, fmt.Sprintf("%d uncommitted file(s)", len(uniqueStrings(append(append(append([]string{}, s.ModifiedFiles...), s.UntrackedFiles...), append(s.UnmergedFiles, s.SourceFiles...)...)))))
 	}
 	if len(s.UnmergedFiles) > 0 {
-		issues = append(issues, fmt.Sprintf("unmerged: %s", strings.Join(s.UnmergedFiles, ", ")))
+		issues = append(issues, fmt.Sprintf("unmerged: %s", strings.Join(uniqueStrings(s.UnmergedFiles), ", ")))
+	}
+	if len(s.SourceFiles) > 0 {
+		issues = append(issues, fmt.Sprintf("source-side paths: %s", strings.Join(uniqueStrings(s.SourceFiles), ", ")))
 	}
 	if s.StashCount > 0 {
 		issues = append(issues, fmt.Sprintf("%d stash(es)", s.StashCount))
@@ -2715,6 +2763,19 @@ func (s *UncommittedWorkStatus) String() string {
 		return "clean"
 	}
 	return strings.Join(issues, ", ")
+}
+
+func uniqueStrings(values []string) []string {
+	seen := make(map[string]bool)
+	var result []string
+	for _, value := range values {
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+	}
+	return result
 }
 
 // CheckUncommittedWork performs a comprehensive check for uncommitted work.
@@ -2731,6 +2792,7 @@ func (g *Git) CheckUncommittedWork() (*UncommittedWorkStatus, error) {
 	status.ModifiedFiles = append(status.ModifiedFiles, gitStatus.Deleted...)
 	status.UntrackedFiles = gitStatus.Untracked
 	status.UnmergedFiles = gitStatus.Unmerged
+	status.SourceFiles = uniqueStrings(append(nonRuntimePaths(gitStatus.SourcePaths), g.runtimeCopySources(gitStatus)...))
 
 	// Check stashes
 	stashCount, err := g.StashCount()
@@ -2747,6 +2809,102 @@ func (g *Git) CheckUncommittedWork() (*UncommittedWorkStatus, error) {
 	status.UnpushedCommits = unpushed
 
 	return status, nil
+}
+
+func nonRuntimePaths(paths []string) []string {
+	var result []string
+	for _, path := range uniqueStrings(paths) {
+		if !isGasTownRuntimePath(path) {
+			result = append(result, path)
+		}
+	}
+	return result
+}
+
+const minRuntimeCopySourceBytes = 16
+
+func (g *Git) runtimeCopySources(status *GitStatus) []string {
+	var candidates []string
+	for _, path := range uniqueStrings(append(append([]string{}, status.Modified...), append(status.Added, status.Untracked...)...)) {
+		if isGasTownRuntimePath(path) {
+			candidates = append(candidates, path)
+		}
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+
+	dirty := make(map[string]bool)
+	for _, path := range append(append(append([]string{}, status.Modified...), status.Added...), append(status.Deleted, status.Unmerged...)...) {
+		dirty[path] = true
+	}
+
+	tracked, err := g.trackedNonRuntimeBlobSources(dirty)
+	if err != nil || len(tracked) == 0 {
+		return nil
+	}
+
+	var sources []string
+	for _, candidate := range candidates {
+		hash, ok := g.worktreeBlobHash(candidate)
+		if !ok {
+			continue
+		}
+		for _, source := range tracked[hash] {
+			if source != candidate {
+				sources = append(sources, source)
+			}
+		}
+	}
+	return uniqueStrings(sources)
+}
+
+func (g *Git) trackedNonRuntimeBlobSources(skip map[string]bool) (map[string][]string, error) {
+	out, err := g.run("ls-files", "-s", "-z")
+	if err != nil || out == "" {
+		return nil, err
+	}
+
+	sources := make(map[string][]string)
+	for _, record := range strings.Split(out, "\x00") {
+		if record == "" {
+			continue
+		}
+		tab := strings.IndexByte(record, '\t')
+		if tab < 0 {
+			continue
+		}
+		fields := strings.Fields(record[:tab])
+		if len(fields) < 2 {
+			continue
+		}
+		path := record[tab+1:]
+		if skip[path] || isGasTownRuntimePath(path) || !g.largeEnoughWorktreeFile(path) {
+			continue
+		}
+		hash, ok := g.worktreeBlobHash(path)
+		if !ok {
+			continue
+		}
+		sources[hash] = append(sources[hash], path)
+	}
+	return sources, nil
+}
+
+func (g *Git) worktreeBlobHash(path string) (string, bool) {
+	if !g.largeEnoughWorktreeFile(path) {
+		return "", false
+	}
+	out, err := g.run("hash-object", "--", path)
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(out), strings.TrimSpace(out) != ""
+}
+
+func (g *Git) largeEnoughWorktreeFile(path string) bool {
+	info, err := os.Stat(filepath.Join(g.workDir, filepath.FromSlash(path)))
+	return err == nil && info.Mode().IsRegular() && info.Size() >= minRuntimeCopySourceBytes
 }
 
 // BranchPushedToRemote checks if a branch has been pushed to the remote.

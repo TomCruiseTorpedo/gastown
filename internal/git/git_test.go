@@ -2235,6 +2235,15 @@ func TestCleanExcludingRuntime(t *testing.T) {
 			want: false,
 		},
 		{
+			name: "runtime copy from real source blocks",
+			s: UncommittedWorkStatus{
+				HasUncommittedChanges: true,
+				UntrackedFiles:        []string{".opencode/plugins/gastown.js"},
+				SourceFiles:           []string{"README.md"},
+			},
+			want: false,
+		},
+		{
 			name: "mix of runtime and real",
 			s: UncommittedWorkStatus{
 				HasUncommittedChanges: true,
@@ -2384,14 +2393,6 @@ func TestParsePorcelainStatusEntryPreservesRenameCopySourceAndConflict(t *testin
 			wantPath:   ".opencode/plugins/gastown.js",
 			wantPaths:  []string{"README.md", ".opencode/plugins/gastown.js"},
 		},
-		{
-			name:      "unmerged",
-			line:      "UU .opencode/plugins/gastown.js",
-			wantCode:  "UU",
-			wantPath:  ".opencode/plugins/gastown.js",
-			wantPaths: []string{".opencode/plugins/gastown.js"},
-			unmerged:  true,
-		},
 	}
 
 	for _, tt := range tests {
@@ -2408,6 +2409,71 @@ func TestParsePorcelainStatusEntryPreservesRenameCopySourceAndConflict(t *testin
 			}
 		})
 	}
+
+	for _, code := range []string{"DD", "AU", "UD", "UA", "DU", "AA", "UU"} {
+		t.Run("unmerged "+code, func(t *testing.T) {
+			got, ok := parsePorcelainStatusEntry(code + " .opencode/plugins/gastown.js")
+			if !ok {
+				t.Fatal("parsePorcelainStatusEntry returned ok=false")
+			}
+			if !got.Unmerged || got.Path != ".opencode/plugins/gastown.js" {
+				t.Fatalf("parsePorcelainStatusEntry unmerged = %+v", got)
+			}
+		})
+	}
+}
+
+func TestGitStatusCompatibilityForRuntimeSafetyFields(t *testing.T) {
+	t.Run("rename keeps destination in modified and source separate", func(t *testing.T) {
+		dir := initTestRepo(t)
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		runGitTestCmd(t, dir, "mv", "README.md", ".opencode/plugins/gastown.js")
+
+		status, err := NewGit(dir).Status()
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if got := strings.Join(status.Modified, "\x00"); got != ".opencode/plugins/gastown.js" {
+			t.Fatalf("Modified = %v, want runtime destination only", status.Modified)
+		}
+		if got := strings.Join(status.SourcePaths, "\x00"); got != "README.md" {
+			t.Fatalf("SourcePaths = %v, want [README.md]", status.SourcePaths)
+		}
+	})
+
+	t.Run("unmerged remains visible to legacy modified callers", func(t *testing.T) {
+		dir := initTestRepo(t)
+		runGitTestCmd(t, dir, "branch", "-M", "main")
+		if err := os.WriteFile(filepath.Join(dir, "conflict.txt"), []byte("base\n"), 0644); err != nil {
+			t.Fatalf("write base conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "add", "conflict.txt")
+		runGitTestCmd(t, dir, "commit", "-m", "add conflict base")
+		runGitTestCmd(t, dir, "switch", "-c", "side")
+		if err := os.WriteFile(filepath.Join(dir, "conflict.txt"), []byte("side\n"), 0644); err != nil {
+			t.Fatalf("write side conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "commit", "-am", "side change")
+		runGitTestCmd(t, dir, "switch", "main")
+		if err := os.WriteFile(filepath.Join(dir, "conflict.txt"), []byte("main\n"), 0644); err != nil {
+			t.Fatalf("write main conflict file: %v", err)
+		}
+		runGitTestCmd(t, dir, "commit", "-am", "main change")
+		runGitTestCmdWantFailure(t, dir, "merge", "side")
+
+		status, err := NewGit(dir).Status()
+		if err != nil {
+			t.Fatalf("Status: %v", err)
+		}
+		if got := strings.Join(status.Modified, "\x00"); got != "conflict.txt" {
+			t.Fatalf("Modified = %v, want [conflict.txt]", status.Modified)
+		}
+		if got := strings.Join(status.Unmerged, "\x00"); got != "conflict.txt" {
+			t.Fatalf("Unmerged = %v, want [conflict.txt]", status.Unmerged)
+		}
+	})
 }
 
 func TestCheckUncommittedWorkCapturesPorcelainRenameAndUnmergedPaths(t *testing.T) {
@@ -2480,6 +2546,91 @@ func TestCheckUncommittedWorkCapturesPorcelainRenameAndUnmergedPaths(t *testing.
 		}
 	})
 
+	t.Run("unstaged copy from real path to runtime path blocks", func(t *testing.T) {
+		dir := initTestRepoWithLargeReadme(t)
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		copyFileForTest(t, filepath.Join(dir, "README.md"), filepath.Join(dir, ".opencode", "plugins", "gastown.js"))
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if got := status.NonRuntimePaths(); len(got) != 1 || got[0] != "README.md" {
+			t.Fatalf("NonRuntimePaths = %v, want [README.md]", got)
+		}
+		if status.CleanExcludingRuntime() {
+			t.Fatal("real source copied to runtime destination must block runtime-excluding clean check")
+		}
+	})
+
+	t.Run("staged copy from real path to runtime path blocks", func(t *testing.T) {
+		dir := initTestRepoWithLargeReadme(t)
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		copyFileForTest(t, filepath.Join(dir, "README.md"), filepath.Join(dir, ".opencode", "plugins", "gastown.js"))
+		runGitTestCmd(t, dir, "add", ".opencode/plugins/gastown.js")
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if got := status.NonRuntimePaths(); len(got) != 1 || got[0] != "README.md" {
+			t.Fatalf("NonRuntimePaths = %v, want [README.md]", got)
+		}
+		if status.CleanExcludingRuntime() {
+			t.Fatal("staged real source copied to runtime destination must block runtime-excluding clean check")
+		}
+	})
+
+	t.Run("copy from runtime path to runtime path is ignored by runtime filter", func(t *testing.T) {
+		dir := initTestRepo(t)
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, ".opencode", "plugins", "old.js"), []byte("runtime copy source with enough bytes\n"), 0644); err != nil {
+			t.Fatalf("write runtime source: %v", err)
+		}
+		runGitTestCmd(t, dir, "add", ".opencode/plugins/old.js")
+		runGitTestCmd(t, dir, "commit", "-m", "add tracked runtime source")
+		copyFileForTest(t, filepath.Join(dir, ".opencode", "plugins", "old.js"), filepath.Join(dir, ".opencode", "plugins", "gastown.js"))
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if got := status.NonRuntimePaths(); len(got) != 0 {
+			t.Fatalf("NonRuntimePaths = %v, want none for runtime-only copy", got)
+		}
+		if !status.CleanExcludingRuntime() {
+			t.Fatal("runtime-only copy should be clean excluding runtime")
+		}
+	})
+
+	t.Run("modified source plus runtime copy blocks source only", func(t *testing.T) {
+		dir := initTestRepoWithLargeReadme(t)
+		if err := os.MkdirAll(filepath.Join(dir, ".opencode", "plugins"), 0755); err != nil {
+			t.Fatalf("mkdir opencode plugins: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("modified source content with enough bytes\n"), 0644); err != nil {
+			t.Fatalf("modify README: %v", err)
+		}
+		copyFileForTest(t, filepath.Join(dir, "README.md"), filepath.Join(dir, ".opencode", "plugins", "gastown.js"))
+
+		status, err := NewGit(dir).CheckUncommittedWork()
+		if err != nil {
+			t.Fatalf("CheckUncommittedWork: %v", err)
+		}
+		if got := status.NonRuntimePaths(); len(got) != 1 || got[0] != "README.md" {
+			t.Fatalf("NonRuntimePaths = %v, want [README.md]", got)
+		}
+		if status.CleanExcludingRuntime() {
+			t.Fatal("modified source plus runtime copy must block runtime-excluding clean check")
+		}
+	})
+
 	t.Run("unmerged runtime conflict blocks", func(t *testing.T) {
 		dir := initTestRepo(t)
 		runGitTestCmd(t, dir, "branch", "-M", "main")
@@ -2546,6 +2697,28 @@ func TestCheckUncommittedWorkCapturesPorcelainRenameAndUnmergedPaths(t *testing.
 			t.Fatal("unmerged conflict must block runtime-excluding clean check")
 		}
 	})
+}
+
+func initTestRepoWithLargeReadme(t *testing.T) string {
+	t.Helper()
+	dir := initTestRepo(t)
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("tracked source content with enough bytes for copy detection\n"), 0644); err != nil {
+		t.Fatalf("write README: %v", err)
+	}
+	runGitTestCmd(t, dir, "add", "README.md")
+	runGitTestCmd(t, dir, "commit", "-m", "make readme large")
+	return dir
+}
+
+func copyFileForTest(t *testing.T, src, dst string) {
+	t.Helper()
+	data, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		t.Fatalf("write copy: %v", err)
+	}
 }
 
 func runGitTestCmd(t *testing.T, dir string, args ...string) {

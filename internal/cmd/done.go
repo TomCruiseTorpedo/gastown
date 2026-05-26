@@ -246,6 +246,8 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 		}
 	}
 
+	cleanupStatusExplicit := doneCleanupStatus != ""
+
 	// Auto-detect cleanup status if not explicitly provided
 	// This prevents premature polecat cleanup by ensuring witness knows git state
 	if doneCleanupStatus == "" {
@@ -278,6 +280,12 @@ func runDone(cmd *cobra.Command, args []string) (retErr error) {
 					}
 				}
 			}
+		}
+	}
+	if cwdAvailable && cleanupStatusExplicit && parseCleanupStatus(doneCleanupStatus) == polecat.CleanupClean {
+		workStatus, err := g.CheckUncommittedWork()
+		if err == nil && workStatus.HasUncommittedChanges && !workStatus.CleanExcludingRuntime() {
+			return fmt.Errorf("--cleanup-status=clean conflicts with current git state: %s", workStatus.String())
 		}
 	}
 
