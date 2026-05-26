@@ -1120,6 +1120,13 @@ func runPolecatCheckRecovery(cmd *cobra.Command, args []string) error {
 		if diagnostic != "" {
 			status.Diagnostics = append(status.Diagnostics, diagnostic)
 		}
+		sourceHint := agentSourceIssueHint(status.Issue, fields)
+		if status.Issue == "" && sourceHint != "" {
+			status.Issue = sourceHint
+		}
+		if !beadTerminal && sourceHint != "" {
+			beadTerminal = isAssignedBeadTerminal(bd, sourceHint)
+		}
 		activeMRAssessment := polecat.ActiveMRAssessment{}
 		if fields.ActiveMR != "" {
 			loadGitState()

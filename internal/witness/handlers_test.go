@@ -670,6 +670,27 @@ func TestHasPendingMRCleanupWispFailsClosed(t *testing.T) {
 	}
 }
 
+func TestTerminalSafeDoneSnapshot(t *testing.T) {
+	workDir := setupActiveMRGitSafeWorkDir(t, "gastown", "nux")
+	bd, _ := mockBd(
+		func(args []string) (string, error) {
+			if len(args) == 0 || args[0] != "show" {
+				return "[]", nil
+			}
+			return `[{"id":"gt-src","status":"closed"}]`, nil
+		},
+		func(args []string) error { return nil },
+	)
+	snap := &agentBeadSnapshot{Fields: &beads.AgentFields{LastSourceIssue: "gt-src"}}
+	if !terminalSafeDoneSnapshot(bd, workDir, "gastown", "nux", snap) {
+		t.Fatalf("terminalSafeDoneSnapshot() = false, want true")
+	}
+	snap.Fields.HookBead = "gt-hook"
+	if terminalSafeDoneSnapshot(bd, workDir, "gastown", "nux", snap) {
+		t.Fatalf("terminalSafeDoneSnapshot() = true with hook set, want false")
+	}
+}
+
 func TestFindCleanupWisp_UsesCorrectBdListFlags(t *testing.T) {
 	t.Parallel()
 	bd, mock := fakeBd()

@@ -221,9 +221,9 @@ func HandlePolecatDoneFromBead(bd *BdCli, workDir, rigName, polecatName string, 
 		result.Error = fmt.Errorf("nil agent fields for polecat %s", polecatName)
 		return result
 	}
-	sourceIssue := fields.HookBead
+	sourceIssue := fields.LastSourceIssue
 	if sourceIssue == "" {
-		sourceIssue = fields.LastSourceIssue
+		sourceIssue = fields.HookBead
 	}
 
 	// Map agent bead fields to the existing PolecatDonePayload for reuse
@@ -1743,6 +1743,9 @@ func detectZombieDeadSession(bd *BdCli, workDir, townRoot, rigName, polecatName,
 		if hasPendingMRFromSnapshot(bd, workDir, rigName, polecatName, snap) {
 			return ZombieResult{}, false
 		}
+		if terminalSafeDoneSnapshot(bd, workDir, rigName, polecatName, snap) {
+			return ZombieResult{}, false
+		}
 
 		// gt-dsgp: Restart instead of nuke — the session died during gt done,
 		// restart it so it can retry the exit sequence or pick up new work.
@@ -2160,9 +2163,9 @@ func DiscoverCompletions(bd *BdCli, workDir, rigName string, router *mail.Router
 			continue // No completion metadata — skip
 		}
 
-		sourceIssue := fields.HookBead
+		sourceIssue := fields.LastSourceIssue
 		if sourceIssue == "" {
-			sourceIssue = fields.LastSourceIssue
+			sourceIssue = fields.HookBead
 		}
 
 		discovery := CompletionDiscovery{
@@ -2232,7 +2235,16 @@ func processDiscoveredCompletion(bd *BdCli, workDir, rigName string, payload *Po
 		return
 	}
 
-	hasMR := payload.MRID != ""
+	hasMR := false
+	if payload.MRID != "" {
+		assessment := polecat.AssessActiveMR(beadCLIShower{bd: bd, workDir: workDir}, polecat.ActiveMRInput{
+			ActiveMR:        payload.MRID,
+			SourceIssueHint: payload.IssueID,
+			RequireGitSafe:  true,
+			GitSafe:         activeMRGitSafe(workDir, rigName, payload.PolecatName),
+		})
+		hasMR = assessment.Pending
+	}
 
 	// When Exit==COMPLETED but MRID is empty and MR creation didn't explicitly
 	// fail, query beads to check if an MR bead exists for this branch.
@@ -3157,6 +3169,24 @@ func activeMRGitSafe(workDir, rigName, polecatName string) bool {
 		return false
 	}
 	return status.CleanExcludingRuntime() && status.StashCount == 0 && status.UnpushedCommits == 0
+}
+
+func terminalSafeDoneSnapshot(bd *BdCli, workDir, rigName, polecatName string, snap *agentBeadSnapshot) bool {
+	if snap == nil || snap.Fields == nil || !activeMRGitSafe(workDir, rigName, polecatName) {
+		return false
+	}
+	if snap.HookBead != "" || snap.Fields.HookBead != "" {
+		return false
+	}
+	sourceIssue := snap.Fields.LastSourceIssue
+	if sourceIssue == "" {
+		return false
+	}
+	issue, err := (beadCLIShower{bd: bd, workDir: workDir}).Show(sourceIssue)
+	if err != nil || issue == nil {
+		return false
+	}
+	return beads.IssueStatus(issue.Status).IsTerminal()
 }
 
 // getAgentMRContext retrieves active_mr and durable source context from an agent bead.

@@ -200,7 +200,9 @@ func checkPolecatSafety(target polecatTarget) *SafetyCheckResult {
 	// Check 2: Open MR beads for this branch
 	if infoErr == nil && polecatInfo != nil && polecatInfo.Branch != "" {
 		mr, mrErr := bd.FindMRForBranch(polecatInfo.Branch)
-		if mrErr == nil && mr != nil {
+		if mrErr != nil {
+			result.Reasons = append(result.Reasons, fmt.Sprintf("open_mr_lookup_error: %v", mrErr))
+		} else if mr != nil {
 			result.OpenMR = mr.ID
 			result.Reasons = append(result.Reasons, fmt.Sprintf("has open MR (%s)", mr.ID))
 		}
