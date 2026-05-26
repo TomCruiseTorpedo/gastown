@@ -615,8 +615,9 @@ func TestDryRunNukeSummary(t *testing.T) {
 }
 
 func TestCheckPolecatSafetyBlocksUnknownGitState(t *testing.T) {
-	mgr := polecat.NewManager(&rig.Rig{Name: "gastown", Path: t.TempDir()}, nil, nil)
-	result := checkPolecatSafety(polecatTarget{rigName: "gastown", polecatName: "missing", mgr: mgr})
+	r := &rig.Rig{Name: "gastown", Path: t.TempDir()}
+	mgr := polecat.NewManager(r, nil, nil)
+	result := checkPolecatSafety(polecatTarget{rigName: "gastown", polecatName: "missing", mgr: mgr, r: r})
 
 	if !result.Blocked {
 		t.Fatal("missing polecat info should block nuke safety checks")
