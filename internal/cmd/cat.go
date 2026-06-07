@@ -61,17 +61,21 @@ func runCat(cmd *cobra.Command, args []string) error {
 }
 
 // isBeadID checks if a string looks like a bead ID.
-// Bead IDs have the format <prefix>-<id> where prefix is lowercase letters
-// (e.g. gt-abc123, bd-xyz, hq-cv-foo, wisp-bar, mol-baz).
+// Bead IDs have the format <prefix>-<id> where the prefix is lowercase letters
+// or underscores (rig names may contain underscores, and the rig name is used as
+// the bead prefix — e.g. gt-abc123, hq-cv-foo, japanese_reader-id3a).
 func isBeadID(s string) bool {
 	// Must contain a dash and start with lowercase letters
 	dashIdx := strings.Index(s, "-")
 	if dashIdx <= 0 || dashIdx >= len(s)-1 {
 		return false
 	}
-	// Prefix must be all lowercase letters
+	// Prefix must be lowercase letters or underscores. Rig names may contain
+	// underscores (hyphens are disallowed in rig names, so underscores are the
+	// natural separator), and the rig name becomes the bead prefix. This mirrors
+	// the characters already permitted by isValidBeadID in convoy.go. See #4090.
 	for _, c := range s[:dashIdx] {
-		if c < 'a' || c > 'z' {
+		if !((c >= 'a' && c <= 'z') || c == '_') {
 			return false
 		}
 	}

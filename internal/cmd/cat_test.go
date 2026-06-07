@@ -18,6 +18,9 @@ func TestIsBeadID(t *testing.T) {
 		{"wy-def", true},
 		// Multi-segment prefixes
 		{"hq-cv-foo", true},
+		// Underscored prefixes - rig names may contain underscores (#4090)
+		{"japanese_reader-id3a", true},
+		{"mcp_fit-92f", true},
 		// Invalid inputs
 		{"", false},
 		{"-abc", false},
